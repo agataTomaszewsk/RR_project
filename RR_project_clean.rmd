@@ -29,6 +29,9 @@ problems in the financial domain.
 1.  [Data loading]
 2.  [Preliminary Data Analysis]
 3.  [Explanatory Data Analysis]
+  3.1. [Class distribution]
+  3.2. [Default vs Disbursal date]
+  3.3. [Univariate analysis]
 
 ## Data loading
 
@@ -96,45 +99,34 @@ is missing. We will treat the NA values as not employed.
 print(unique(train$EMPLOYMENT_TYPE))
 length(unique(train$EMPLOYMENT_TYPE))
 ```
-
-```{r data-structure}
+Let's analyze the structure of the data set. We can see that most of the variables are numeric. We see that 'AVERAGE_ACCT_AGE' and 'CREDIT_HISTORY_LENGHT' can be changed from characters to numbers. 
+```{r}
 str(train)
 ```
 
-```{r Changing AVERAGE_ACCT_AGE & CREDIT_HISTORY_LENGTH}
-# Changing AVERAGE_ACCT_AGE & CREDIT_HISTORY_LENGTH
+
+```{r}
+parse_age <- function(x) {
+  years <- as.numeric(str_extract(x, "\\d+(?=yrs)"))
+  months <- as.numeric(str_extract(x, "\\d+(?=mon)"))
+  years[is.na(years)] <- 0
+  months[is.na(months)] <- 0
+  years + months / 12
+}
 
 train <- train %>%
-  separate(AVERAGE_ACCT_AGE, into = c("AVERAGE_ACCT_Yr", "AVERAGE_ACCT_Month"), sep = "yrs") %>%
-  mutate(
-    AVERAGE_ACCT_Month = str_remove(AVERAGE_ACCT_Month, "mon"),
-    AVERAGE_ACCT_AGE = as.numeric(trimws(AVERAGE_ACCT_Yr)) + as.numeric(trimws(AVERAGE_ACCT_Month)) / 12
-  ) %>%
-  select(-AVERAGE_ACCT_Yr, -AVERAGE_ACCT_Month)
-
-train <- train %>%
-  separate(CREDIT_HISTORY_LENGTH, into = c("CREDIT_HISTORY_LENGTH_Yr", "CREDIT_HISTORY_LENGTH_Month"), sep = "yrs") %>%
-  mutate(
-    CREDIT_HISTORY_LENGTH_Month = str_remove(CREDIT_HISTORY_LENGTH_Month, "mon"),
-    CREDIT_HISTORY_LENGTH = as.numeric(trimws(CREDIT_HISTORY_LENGTH_Yr)) + as.numeric(trimws(CREDIT_HISTORY_LENGTH_Month)) / 12
-  ) %>%
-  select(-CREDIT_HISTORY_LENGTH_Yr, -CREDIT_HISTORY_LENGTH_Month)
+  mutate(AVERAGE_ACCT_AGE = parse_age(AVERAGE_ACCT_AGE),
+         CREDIT_HISTORY_LENGTH = parse_age(CREDIT_HISTORY_LENGTH))
 
 test <- test %>%
-  separate(AVERAGE_ACCT_AGE, into = c("AVERAGE_ACCT_Yr", "AVERAGE_ACCT_Month"), sep = "yrs") %>%
-  mutate(
-    AVERAGE_ACCT_Month = str_remove(AVERAGE_ACCT_Month, "mon"),
-    AVERAGE_ACCT_AGE = as.numeric(trimws(AVERAGE_ACCT_Yr)) + as.numeric(trimws(AVERAGE_ACCT_Month)) / 12
-  ) %>%
-  select(-AVERAGE_ACCT_Yr, -AVERAGE_ACCT_Month)
+  mutate(AVERAGE_ACCT_AGE = parse_age(AVERAGE_ACCT_AGE),
+         CREDIT_HISTORY_LENGTH = parse_age(CREDIT_HISTORY_LENGTH))
 
-test <- test %>%
-  separate(CREDIT_HISTORY_LENGTH, into = c("CREDIT_HISTORY_LENGTH_Yr", "CREDIT_HISTORY_LENGTH_Month"), sep = "yrs") %>%
-  mutate(
-    CREDIT_HISTORY_LENGTH_Month = str_remove(CREDIT_HISTORY_LENGTH_Month, "mon"),
-    CREDIT_HISTORY_LENGTH = as.numeric(trimws(CREDIT_HISTORY_LENGTH_Yr)) + as.numeric(trimws(CREDIT_HISTORY_LENGTH_Month)) / 12
-  ) %>%
-  select(-CREDIT_HISTORY_LENGTH_Yr, -CREDIT_HISTORY_LENGTH_Month)
+```
+
+Additionally, we changed the format of variables 'DATE_OF_BIRTH' and 'DISBURSAL_DATE' form object to date. 
+
+```{r}
 
 train$DATE_OF_BIRTH <- as.Date(train$DATE_OF_BIRTH, format = "%d-%m-%Y")
 test$DATE_OF_BIRTH  <- as.Date(test$DATE_OF_BIRTH,  format = "%d-%m-%Y")
@@ -144,21 +136,29 @@ train$DISBURSAL_DATE <- as.Date(train$DISBURSAL_DATE, format = "%d-%m-%Y")
 test$DISBURSAL_DATE  <- as.Date(test$DISBURSAL_DATE,  format = "%d-%m-%Y")
 ```
 
-```{r EDA}
-## EDA
-```
+Finally, we obtained the dataset shaped like this:
 
 ```{r}
-##Class Distribution 
+str(train)
+```
+
+## Explanatory Data Analysis
+Now we can proceed with the EDA. Let's start with
+
+### Class distribution
+We will analyze the distribution of the target variable 'LOAN_DEFAULT'.
+
+```{r}
 class_df <- train %>%
   group_by(LOAN_DEFAULT) %>%
   summarise(UNIQUEID_count = n()) %>%
   arrange(desc(UNIQUEID_count))
 
 formattable(class_df, list( UNIQUEID_count = color_bar("lightgreen") ))
+```
 
-# Graph
 
+```{r}
 colors <- c("0" = "deepskyblue", "1" = "deeppink")
 
 ggplot(train, aes(x = factor(LOAN_DEFAULT), fill = factor(LOAN_DEFAULT))) +
@@ -178,14 +178,20 @@ cat(sprintf("%% of no defaults       : %.2f%%\n", percentage_0))
 cat(sprintf("Number of no defaults  : %d\n", count_default_0))
 cat(sprintf("%% of defaults          : %.2f%%\n", percentage_1))
 cat(sprintf("Number of defaults     : %d\n", count_default_1))
+```
+Also, let's analyze the distribution between other categorical variables, such as 'EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG', 'AADHAR_FLAG', 'PAN_FLAG', 'VOTERID_FLAG', 'DRIVING_FLAG' and 'PASSPORT_FLAG'
 
-cat("Employment type\n")
+```{r}
+cat("Employment type\n\n")
 train %>%
   group_by(EMPLOYMENT_TYPE, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
   group_by(EMPLOYMENT_TYPE) %>%
-  mutate(percentage = count / sum(count)) %>%
-  print()
+  mutate(prop = count / sum(count)) %>%
+  arrange(EMPLOYMENT_TYPE, LOAN_DEFAULT) %>%
+  print(n = Inf)
+
+cat("##############\n")
 
 cat("Mobile Flag\n")
 train %>%
@@ -247,20 +253,29 @@ train_0 <- train %>% filter(LOAN_DEFAULT == 0)
 train_1 <- train %>% filter(LOAN_DEFAULT == 1)
 
 ```
+We can observe that the distribution between defaulted and non-defaulted client across all analyzed variables fluctuates around 21/79. 
+
+### Default vs. Disbursal date
 
 ```{r}
-## Default vs Disbursal date
-
 train$DISBURSAL_DATE <- as.Date(train$DISBURSAL_DATE)
 
-ggplot(train, aes(x = DISBURSAL_DATE, fill = factor(LOAN_DEFAULT))) +
-geom_histogram(bins = 50, position = "identity", alpha = 0.7) +
-facet_wrap(~LOAN_DEFAULT, ncol = 1, scales = "free_y") +
-scale_fill_manual(values = c("0" = "deepskyblue", "1" = "deeppink"),
-labels = c("No default", "Default")) + labs( title = "Disbursal Date by
-Loan Default Status", x = "DISBURSAL DATE", y = "Number of Loans", fill
-= "Loan Default" ) + theme_minimal()
+train$LOAN_DEFAULT <- as.factor(train$LOAN_DEFAULT)
 
+ggplot(train, aes(x = DISBURSAL_DATE, fill = LOAN_DEFAULT)) +
+  geom_histogram(data = subset(train, LOAN_DEFAULT == 1), 
+                 bins = 50, alpha = 0.8, fill = "deeppink") +
+  geom_histogram(data = subset(train, LOAN_DEFAULT == 0), 
+                 bins = 50, alpha = 0.8, fill = "deepskyblue") +
+  facet_wrap(~LOAN_DEFAULT, ncol = 1, scales = "free_y",
+             labeller = as_labeller(c(`0` = "No default", `1` = "Default"))) +
+  labs(x = "DISBURSAL DATE", y = "Number of Loans") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+### Univariate analysis
+```{r}
 ## Univariate analysis
 
 # Plot distribution of one feature
