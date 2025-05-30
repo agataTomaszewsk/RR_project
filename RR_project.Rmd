@@ -1,0 +1,735 @@
+---
+title: "RR project"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+date: "2025-05-29"
+---
+This is an RR project
+
+## Import data
+
+```{r setup, message=FALSE}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(formattable)
+library(ggcorrplot)
+suppressWarnings({
+  library(ggplot2)
+  library(lubridate)
+  library(gridExtra)
+})
+library(ggcorrplot)
+train <- read.csv("Downloads/train.csv")
+test  <- read.csv("Downloads/test.csv")
+df    <- bind_rows(train, test)
+``` 
+
+```{r check-dimensions}
+cat("Shape of training dataframe: ", dim(train), "\n")
+cat("Shape of testing dataframe: ", dim(test), "\n")
+
+train <- train[!duplicated(train), ]
+test <- test[!duplicated(test), ]
+
+cat("Shape of training dataframe after removing duplicates: ", dim(train), "\n")
+cat("Shape of testing dataframe after removing duplicates: ", dim(test), "\n")
+
+cat("Names of columns: ", colnames(train), "\n")
+```
+
+```{r missing-values-train}
+total <- nrow(train)
+missing_data <- train %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "column name", values_to = "Total missing") %>%
+  mutate(`Percent missing` = (`Total missing` / total) * 100) %>%
+  arrange(desc(`Total missing`))
+print(missing_data)
+```
+
+```{r unique-employment-type}
+print(unique(train$EMPLOYMENT_TYPE))
+length(unique(train$EMPLOYMENT_TYPE))
+```
+
+```{r data-structure}
+str(train)
+```
+
+```{r Changing AVERAGE_ACCT_AGE & CREDIT_HISTORY_LENGTH}
+train <- train %>%
+  separate(AVERAGE_ACCT_AGE, into = c("AVERAGE_ACCT_Yr", "AVERAGE_ACCT_Month"), sep = "yrs") %>%
+  mutate(
+    AVERAGE_ACCT_Month = str_remove(AVERAGE_ACCT_Month, "mon"),
+    AVERAGE_ACCT_AGE = as.numeric(trimws(AVERAGE_ACCT_Yr)) + as.numeric(trimws(AVERAGE_ACCT_Month)) / 12
+  ) %>%
+  select(-AVERAGE_ACCT_Yr, -AVERAGE_ACCT_Month)
+
+train <- train %>%
+  separate(CREDIT_HISTORY_LENGTH, into = c("CREDIT_HISTORY_LENGTH_Yr", "CREDIT_HISTORY_LENGTH_Month"), sep = "yrs") %>%
+  mutate(
+    CREDIT_HISTORY_LENGTH_Month = str_remove(CREDIT_HISTORY_LENGTH_Month, "mon"),
+    CREDIT_HISTORY_LENGTH = as.numeric(trimws(CREDIT_HISTORY_LENGTH_Yr)) + as.numeric(trimws(CREDIT_HISTORY_LENGTH_Month)) / 12
+  ) %>%
+  select(-CREDIT_HISTORY_LENGTH_Yr, -CREDIT_HISTORY_LENGTH_Month)
+
+test <- test %>%
+  separate(AVERAGE_ACCT_AGE, into = c("AVERAGE_ACCT_Yr", "AVERAGE_ACCT_Month"), sep = "yrs") %>%
+  mutate(
+    AVERAGE_ACCT_Month = str_remove(AVERAGE_ACCT_Month, "mon"),
+    AVERAGE_ACCT_AGE = as.numeric(trimws(AVERAGE_ACCT_Yr)) + as.numeric(trimws(AVERAGE_ACCT_Month)) / 12
+  ) %>%
+  select(-AVERAGE_ACCT_Yr, -AVERAGE_ACCT_Month)
+
+test <- test %>%
+  separate(CREDIT_HISTORY_LENGTH, into = c("CREDIT_HISTORY_LENGTH_Yr", "CREDIT_HISTORY_LENGTH_Month"), sep = "yrs") %>%
+  mutate(
+    CREDIT_HISTORY_LENGTH_Month = str_remove(CREDIT_HISTORY_LENGTH_Month, "mon"),
+    CREDIT_HISTORY_LENGTH = as.numeric(trimws(CREDIT_HISTORY_LENGTH_Yr)) + as.numeric(trimws(CREDIT_HISTORY_LENGTH_Month)) / 12
+  ) %>%
+  select(-CREDIT_HISTORY_LENGTH_Yr, -CREDIT_HISTORY_LENGTH_Month)
+
+train$DATE_OF_BIRTH <- as.Date(train$DATE_OF_BIRTH, format = "%d-%m-%Y")
+test$DATE_OF_BIRTH  <- as.Date(test$DATE_OF_BIRTH,  format = "%d-%m-%Y")
+
+
+train$DISBURSAL_DATE <- as.Date(train$DISBURSAL_DATE, format = "%d-%m-%Y")
+test$DISBURSAL_DATE  <- as.Date(test$DISBURSAL_DATE,  format = "%d-%m-%Y")
+```
+
+```{r EDA}
+## EDA
+class_df <- train %>%
+  group_by(LOAN_DEFAULT) %>%
+  summarise(UNIQUEID_count = n()) %>%
+  arrange(desc(UNIQUEID_count))
+
+formattable(class_df, list(
+  UNIQUEID_count = color_bar("lightgreen")
+))
+
+colors <- c("0" = "deepskyblue", "1" = "deeppink")
+
+ggplot(train, aes(x = factor(LOAN_DEFAULT), fill = factor(LOAN_DEFAULT))) +
+  geom_bar() +
+  scale_fill_manual(values = colors) +
+  labs(title = "Class Distribution", x = "Loan Default", y = "Count") +
+  theme_minimal()
+
+count_default_0 <- sum(train$LOAN_DEFAULT == 0, na.rm = TRUE)
+count_default_1 <- sum(train$LOAN_DEFAULT == 1, na.rm = TRUE)
+total <- count_default_0 + count_default_1
+
+percentage_0 <- (count_default_0 / total) * 100
+percentage_1 <- (count_default_1 / total) * 100
+
+cat(sprintf("%% of no defaults       : %.2f%%\n", percentage_0))
+cat(sprintf("Number of no defaults  : %d\n", count_default_0))
+cat(sprintf("%% of defaults          : %.2f%%\n", percentage_1))
+cat(sprintf("Number of defaults     : %d\n", count_default_1))
+
+cat("Employment type\n")
+train %>%
+  group_by(EMPLOYMENT_TYPE, LOAN_DEFAULT) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(EMPLOYMENT_TYPE) %>%
+  mutate(percentage = count / sum(count)) %>%
+  print()
+
+cat("Mobile Flag\n")
+train %>%
+  group_by(MOBILENO_AVL_FLAG, LOAN_DEFAULT) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(MOBILENO_AVL_FLAG) %>%
+  mutate(percentage = count / sum(count)) %>%
+  print()
+
+# Aadhar Flag
+cat("Aadhar Flag\n")
+train %>%
+  group_by(AADHAR_FLAG, LOAN_DEFAULT) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(AADHAR_FLAG) %>%
+  mutate(percentage = count / sum(count)) %>%
+  print()
+
+cat("Pan Flag\n")
+train %>%
+  group_by(PAN_FLAG, LOAN_DEFAULT) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(PAN_FLAG) %>%
+  mutate(percentage = count / sum(count)) %>%
+  print()
+
+# Voter ID Flag
+cat("Voter ID Flag\n")
+train %>%
+  group_by(VOTERID_FLAG, LOAN_DEFAULT) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(VOTERID_FLAG) %>%
+  mutate(percentage = count / sum(count)) %>%
+  print()
+
+cat("Driving L Flag\n")
+train %>%
+  group_by(DRIVING_FLAG, LOAN_DEFAULT) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(DRIVING_FLAG) %>%
+  mutate(percentage = count / sum(count)) %>%
+  print()
+
+cat("Passport\n")
+train %>%
+  group_by(PASSPORT_FLAG, LOAN_DEFAULT) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(PASSPORT_FLAG) %>%
+  mutate(percentage = count / sum(count)) %>%
+  print()
+
+train %>%
+  group_by(LOAN_DEFAULT, EMPLOYMENT_TYPE, AADHAR_FLAG, PAN_FLAG, DRIVING_FLAG, PASSPORT_FLAG, VOTERID_FLAG) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  arrange(desc(count)) %>%
+  print()
+
+train_0 <- train %>% filter(LOAN_DEFAULT == 0)
+train_1 <- train %>% filter(LOAN_DEFAULT == 1)
+
+train$DISBURSAL_DATE <- as.Date(train$DISBURSAL_DATE)
+
+ggplot(train, aes(x = DISBURSAL_DATE, fill = factor(LOAN_DEFAULT))) +
+  geom_histogram(bins = 50, position = "identity", alpha = 0.7) +
+  facet_wrap(~LOAN_DEFAULT, ncol = 1, scales = "free_y") +
+  scale_fill_manual(values = c("0" = "deepskyblue", "1" = "deeppink"),
+                    labels = c("No default", "Default")) +
+  labs(
+    title = "Disbursal Date by Loan Default Status",
+    x = "DISBURSAL DATE",
+    y = "Number of Loans",
+    fill = "Loan Default"
+  ) +
+  theme_minimal()
+
+plot_distribution <- function(feature, color = "steelblue") {
+  ggplot(train, aes_string(x = feature)) +
+    geom_histogram(aes(y = ..density..), fill = color, bins = 100, alpha = 0.7, na.rm = TRUE) +
+    geom_density(color = "black", size = 1, na.rm = TRUE) +
+    labs(title = paste("Distribution of", feature), x = feature, y = "Density") +
+    theme_minimal()
+}
+
+plot_distribution_comp <- function(features, nrow = 2) {
+  plots <- list()
+  
+  for (feature in features) {
+    p <- ggplot(train, aes_string(x = feature, color = "factor(LOAN_DEFAULT)")) +
+      geom_density(na.rm = TRUE, size = 1.2) +
+      labs(title = paste("Distribution of", feature),
+           x = feature, y = "Density",
+           color = "LOAN_DEFAULT") +
+      theme_minimal() +
+      scale_color_manual(values = c("0" = "deepskyblue", "1" = "deeppink"),
+                         labels = c("0 (No Default)", "1 (Default)"))
+    plots[[length(plots) + 1]] <- p
+  }
+  
+  # Arrange plots in grid
+  do.call(gridExtra::grid.arrange, c(plots, nrow = nrow))
+}
+
+#plot_distribution("LTV", "darkorange")
+
+plot_box <- function(feature, color = "skyblue") {
+  ggplot(train, aes_string(y = feature)) +
+    geom_boxplot(fill = color, outlier.color = "red", na.rm = TRUE) +
+    labs(title = paste("Box Plot of", feature), y = feature) +
+    theme_minimal()
+}
+
+plot_bar <- function(feature) {
+  ggplot(train, aes_string(y = feature, fill = "factor(LOAN_DEFAULT)")) +
+    geom_bar(position = "dodge", color = "black") +
+    scale_fill_manual(values = c("0" = "skyblue", "1" = "pink"),
+                      name = "LOAN_DEFAULT",
+                      labels = c("No Default", "Default")) +
+    labs(title = paste("Bar Plot of", feature, "by Loan Default"),
+         y = feature,
+         x = "Count") +
+    theme_minimal() +
+    theme(
+      axis.text.y = element_text(size = 10),
+      plot.title = element_text(size = 14, face = "bold")
+    )
+}
+summary(train$DISBURSED_AMOUNT)
+
+plot_distribution("DISBURSED_AMOUNT", "green")
+
+plot_box("DISBURSED_AMOUNT", "green")
+
+# Liczba obserwacji
+obs <- length(train$DISBURSED_AMOUNT)
+cat("No. of observations in column: ", obs, "\n")
+
+# Statystyki opisowe: średnia i odchylenie standardowe
+data_mean <- mean(train$DISBURSED_AMOUNT, na.rm = TRUE)
+data_sd   <- sd(train$DISBURSED_AMOUNT, na.rm = TRUE)
+cat(sprintf("Statistics: Mean = %.3f, Std dev = %.3f\n", data_mean, data_sd))
+
+# Próg dla wartości odstających (3 * odchylenie)
+cut_off <- data_sd * 3
+lower <- data_mean - cut_off
+upper <- data_mean + cut_off
+
+# Identyfikacja wartości odstających
+outliers <- train$DISBURSED_AMOUNT[train$DISBURSED_AMOUNT < lower | train$DISBURSED_AMOUNT > upper]
+cat("Identified outliers: ", length(outliers), "\n")
+
+# Imputacja outlierów
+train$DISBURSED_AMOUNT_new <- sapply(train$DISBURSED_AMOUNT, function(x) {
+  if (is.na(x)) {
+    return(NA)
+  } else if (x <= lower || x >= upper) {
+    return(data_mean)
+  } else {
+    return(x)
+  }
+})
+
+# Liczba obserwacji po imputacji
+cat("No. of observations in column: ", length(train$DISBURSED_AMOUNT_new), "\n")
+
+bin_labels <- c("Low", "Medium", "High", "Extreme")
+
+quantiles <- quantile(train$DISBURSED_AMOUNT, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
+
+# Podział na przedziały wg kwartyli
+train$DISBURSED_AMOUNT_bins <- cut(train$DISBURSED_AMOUNT,
+                                   breaks = quantiles,
+                                   include.lowest = TRUE,
+                                   labels = bin_labels)
+
+# Liczba obserwacji w każdej kategorii
+table(train$DISBURSED_AMOUNT_bins)
+
+plot_bar("DISBURSED_AMOUNT_bins")
+
+summary(train$ASSET_COST)
+plot_distribution <- function(feature, color = "steelblue") {
+  ggplot(train, aes_string(x = feature)) +
+    geom_histogram(aes(y = ..density..), fill = color, bins = 100, alpha = 0.7, na.rm = TRUE) +
+    geom_density(color = "black", size = 1, na.rm = TRUE) +
+    labs(title = paste("Distribution of", feature), x = feature, y = "Density") +
+    theme_minimal()
+}
+plot_distribution("ASSET_COST", "tomato")
+plot_box("ASSET_COST", "tomato")
+
+outlier_data <- function(df, feature) {
+  # Liczba obserwacji
+  obs <- length(df[[feature]])
+  cat("No. of observations in column:", obs, "\n")
+  
+  # Statystyki opisowe
+  data_mean <- mean(df[[feature]], na.rm = TRUE)
+  data_sd   <- sd(df[[feature]], na.rm = TRUE)
+  cat(sprintf("Statistics: Mean = %.3f, Std dev = %.3f\n", data_mean, data_sd))
+  
+  # Próg dla wartości odstających
+  cut_off <- data_sd * 3
+  lower <- data_mean - cut_off
+  upper <- data_mean + cut_off
+  
+  # Zliczenie outlierów
+  outliers <- df[[feature]][df[[feature]] < lower | df[[feature]] > upper]
+  cat("Identified outliers:", length(outliers), "\n")
+  
+  # Zwraca użyte wartości progowe i średnią, by móc je wykorzystać dalej
+  return(list(lower = lower, upper = upper, mean = data_mean))
+}
+
+impute_outlier <- function(vec, lower, upper, mean_val) {
+  sapply(vec, function(x) {
+    if (is.na(x)) {
+      return(NA)
+    } else if (x <= lower || x >= upper) {
+      return(mean_val)
+    } else {
+      return(x)
+    }
+  })
+}
+outlier_data(train,"ASSET_COST")
+
+bin_labels <- c("Low", "Medium", "High", "Extreme")
+
+# Oblicz kwartyle dla ASSET_COST
+quantiles <- quantile(train$ASSET_COST, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
+
+# Podziel dane na 4 kategorie według kwartyli
+train$ASSET_COST_bins <- cut(train$ASSET_COST,
+                             breaks = quantiles,
+                             include.lowest = TRUE,
+                             labels = bin_labels)
+
+# Policz liczbę obserwacji w każdej kategorii
+table(train$ASSET_COST_bins)
+plot_bar("ASSET_COST_bins")
+summary(train$LTV)
+plot_distribution("LTV", "blue")
+plot_box("LTV", "blue")
+outlier_data(train,"LTV")
+
+# 1. Wykrycie outlierów i wyznaczenie progów
+ltv_stats <- outlier_data(train, "LTV")
+
+# 2. Imputacja wartości odstających do nowej kolumny
+train$LTV_new <- impute_outlier(train$LTV, ltv_stats$lower, ltv_stats$upper, ltv_stats$mean)
+
+# 3. Liczba obserwacji po imputacji
+cat("No. of observations in column:", length(train$LTV_new), "\n")
+
+# 4. Analiza nowej kolumny
+outlier_data(train, "LTV_new")
+
+bin_labels <- c("Low", "Medium", "High", "Extreme")
+
+# Wyliczenie kwartyli dla LTV
+ltv_quantiles <- quantile(train$LTV, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
+
+# Podział na przedziały według kwartyli z etykietami
+train$LTV_bins <- cut(train$LTV,
+                      breaks = ltv_quantiles,
+                      include.lowest = TRUE,
+                      labels = bin_labels)
+
+# Liczba obserwacji w każdej kategorii
+table(train$LTV_bins)
+plot_bar("LTV_bins")
+summary(train$PERFORM_CNS_SCORE)
+plot_distribution("PERFORM_CNS_SCORE", "blue")
+plot_box("PERFORM_CNS_SCORE", "blue")
+outlier_data(train,"PERFORM_CNS_SCORE")
+
+bin_labels <- c("No History", "Very Low", "Low", "Medium", "High")
+cut_bins <- c(-1, 10, 150, 350, 650, 1000)
+
+# Tworzenie kategorii
+train$PERFORM_CNS_SCORE_bins <- cut(train$PERFORM_CNS_SCORE,
+                                    breaks = cut_bins,
+                                    labels = bin_labels,
+                                    include.lowest = TRUE,
+                                    right = TRUE)
+
+# Liczba obserwacji w każdej kategorii
+table(train$PERFORM_CNS_SCORE_bins)
+
+plot_bar("PERFORM_CNS_SCORE_bins")
+
+train %>%
+  group_by(PERFORM_CNS_SCORE_DESCRIPTION, PERFORM_CNS_SCORE_bins) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(desc(count))
+
+table(train$PERFORM_CNS_SCORE_DESCRIPTION)
+
+gg <- train %>%
+  group_by(PERFORM_CNS_SCORE_DESCRIPTION, LOAN_DEFAULT) %>%
+  summarise(counts = n(), .groups = "drop") %>%
+  group_by(PERFORM_CNS_SCORE_DESCRIPTION) %>%
+  mutate(percentage = counts / sum(counts) * 100) %>%
+  ungroup()
+
+print(gg)
+
+summary(train$PRI_NO_OF_ACCTS)
+
+plot_distribution("PRI_NO_OF_ACCTS", "blue")
+
+plot_box("PRI_NO_OF_ACCTS", "blue")
+
+outlier_data(train,"PRI_NO_OF_ACCTS")
+
+# 1. Oblicz statystyki dla PRI_NO_OF_ACCTS
+stats_pri <- outlier_data(train, "PRI_NO_OF_ACCTS")
+
+# 2. Imputacja wartości odstających do nowej kolumny
+train$PRI_NO_OF_ACCTS_new <- impute_outlier(train$PRI_NO_OF_ACCTS,
+                                            stats_pri$lower,
+                                            stats_pri$upper,
+                                            stats_pri$mean)
+
+# 3. Analiza nowej kolumny
+outlier_data(train, "PRI_NO_OF_ACCTS_new")
+
+# Etykiety i przedziały
+bin_labels <- c("One", "More than One")
+cut_bins <- c(-1, 1, 1000)
+
+# Podział na przedziały
+train$PRI_NO_OF_ACCTS_bins <- cut(train$PRI_NO_OF_ACCTS,
+                                  breaks = cut_bins,
+                                  labels = bin_labels,
+                                  include.lowest = TRUE,
+                                  right = TRUE)
+
+# Liczba obserwacji w każdej kategorii
+table(train$PRI_NO_OF_ACCTS_bins)
+
+plot_bar("PRI_NO_OF_ACCTS_bins")
+
+summary(train$PRI_OVERDUE_ACCTS)
+plot_box("PRI_OVERDUE_ACCTS", "blue")
+
+outlier_data(train,"PRI_OVERDUE_ACCTS")
+
+
+# 1. Oblicz progi i średnią dla PRI_OVERDUE_ACCTS
+stats_overdue <- outlier_data(train, "PRI_OVERDUE_ACCTS")
+
+# 2. Imputacja wartości odstających do nowej kolumny
+train$PRI_OVERDUE_ACCTS_new <- impute_outlier(train$PRI_OVERDUE_ACCTS,
+                                              stats_overdue$lower,
+                                              stats_overdue$upper,
+                                              stats_overdue$mean)
+
+# 3. Analiza nowej kolumny po imputacji
+outlier_data(train, "PRI_OVERDUE_ACCTS_new")
+
+
+# Definicja etykiet i przedziałów
+bin_labels <- c("None", "One (or more)")
+cut_bins <- c(-1, 0, 1000)
+
+# Podział na biny
+train$PRI_OVERDUE_ACCTS_bins <- cut(train$PRI_OVERDUE_ACCTS,
+                                    breaks = cut_bins,
+                                    labels = bin_labels,
+                                    include.lowest = TRUE,
+                                    right = TRUE)
+
+# Liczba obserwacji w każdej kategorii (odpowiednik .value_counts())
+table(train$PRI_OVERDUE_ACCTS_bins)
+
+plot_bar("PRI_OVERDUE_ACCTS_bins")
+
+install.packages('gridExtra')
+library(gridExtra)
+
+plot_bar_comp <- function(features, nrow = 2) {
+  plots <- list()
+  
+  for (feature in features) {
+    p <- ggplot(train, aes_string(x = "factor(LOAN_DEFAULT)", fill = "factor(LOAN_DEFAULT)")) +
+      geom_bar(data = train, aes_string(y = "..count.."), position = "dodge", color = "black") +
+      facet_wrap(as.formula(paste("~", feature))) +
+      scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"),
+                        name = "Loan Default",
+                        labels = c("No Default", "Default")) +
+      labs(title = paste("Distribution by", feature),
+           x = "LOAN_DEFAULT", y = "Count") +
+      theme_minimal()
+    plots[[length(plots) + 1]] <- p
+  }
+  
+  do.call(grid.arrange, c(plots, nrow = nrow))
+}
+
+var <- c("MOBILENO_AVL_FLAG", "AADHAR_FLAG", "PAN_FLAG", "VOTERID_FLAG", "PASSPORT_FLAG", "DRIVING_FLAG")
+plot_bar_comp(var, nrow = 3)
+
+ggplot(train, aes(x = EMPLOYMENT_TYPE, fill = factor(LOAN_DEFAULT))) +
+  geom_bar(position = "dodge", color = "black") +
+  labs(title = "EMPLOYMENT_TYPE vs LOAN_DEFAULT",
+       x = "Employment Type",
+       y = "Count",
+       fill = "Loan Default") +
+  theme_minimal() +
+  scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"))
+
+install.packages('lubridate')
+library(lubridate)
+
+# 1. Oblicz wiek jako różnicę w dniach między dziś a datą urodzenia
+train <- train %>%
+  mutate(age = as.numeric(Sys.Date() - DATE_OF_BIRTH))
+
+# 2. Przekształć wiek do typu całkowitego
+train$age <- as.integer(train$age)
+
+# 3. Podgląd
+head(train$age)
+
+str(train$DISBURSAL_DATE)
+
+train <- train %>%
+  mutate(disbursal_time = as.integer(difftime(Sys.Date(), DISBURSAL_DATE, units = "days")))
+
+head(train$disbursal_time)
+
+ggplot(train, aes(x = factor(MANUFACTURER_ID), fill = factor(LOAN_DEFAULT))) +
+  geom_bar(position = "dodge", color = "black") +
+  labs(title = "MANUFACTURER_ID vs LOAN_DEFAULT",
+       x = "MANUFACTURER_ID",
+       y = "Count",
+       fill = "Loan Default") +
+  scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"),
+                    labels = c("No Default", "Default")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(train, aes(x = factor(BRANCH_ID), fill = factor(LOAN_DEFAULT))) +
+  geom_bar(position = "dodge", color = "black") +
+  labs(title = "BRANCH_ID vs LOAN_DEFAULT",
+       x = "BRANCH_ID",
+       y = "Count",
+       fill = "Loan Default") +
+  scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"),
+                    labels = c("No Default", "Default")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+plot_distribution_comp <- function(features, nrow = 2) {
+  plots <- list()
+  
+  for (feature in features) {
+    p <- ggplot(train, aes_string(x = feature, fill = "factor(LOAN_DEFAULT)", color = "factor(LOAN_DEFAULT)")) +
+      geom_histogram(aes(y = ..density..), bins = 100, position = "identity", alpha = 0.3, na.rm = TRUE) +
+      geom_density(size = 1.2, na.rm = TRUE) +
+      labs(title = paste("Distribution of", feature),
+           x = feature, y = "Density",
+           fill = "LOAN_DEFAULT", color = "LOAN_DEFAULT") +
+      scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato")) +
+      scale_color_manual(values = c("0" = "skyblue", "1" = "tomato")) +
+      theme_minimal()
+    
+    plots[[length(plots) + 1]] <- p
+  }
+  
+  do.call(grid.arrange, c(plots, nrow = nrow))
+}
+
+var <- c("PRI_NO_OF_ACCTS_new", "PRI_ACTIVE_ACCTS", "PRI_OVERDUE_ACCTS_new",
+         "PRI_CURRENT_BALANCE", "PRI_SANCTIONED_AMOUNT", "PRI_DISBURSED_AMOUNT")
+
+plot_distribution_comp(var, nrow = 3)
+
+var <- c("SEC_NO_OF_ACCTS", "SEC_ACTIVE_ACCTS", "SEC_OVERDUE_ACCTS",
+         "SEC_CURRENT_BALANCE", "SEC_SANCTIONED_AMOUNT", "SEC_DISBURSED_AMOUNT")
+
+plot_distribution_comp(var, nrow = 3)
+
+
+train <- train %>%
+  select(-DATE_OF_BIRTH, -STATE_ID, -EMPLOYEE_CODE_ID,
+         -SUPPLIER_ID, -MANUFACTURER_ID, -CURRENT_PINCODE_ID, -BRANCH_ID)
+
+install.packages('ggcorrplot')
+library(ggcorrplot)
+
+# Wybór kolumn
+corr_cols <- c("PRI_ACTIVE_ACCTS", "PRI_CURRENT_BALANCE", "PRI_SANCTIONED_AMOUNT", "PRI_DISBURSED_AMOUNT",
+               "SEC_NO_OF_ACCTS", "SEC_ACTIVE_ACCTS", "SEC_OVERDUE_ACCTS", "SEC_CURRENT_BALANCE",
+               "SEC_SANCTIONED_AMOUNT", "SEC_DISBURSED_AMOUNT", "PRI_NO_OF_ACCTS_new", "PRI_OVERDUE_ACCTS_new")
+
+# Wyciąg podzbioru danych
+corr_data <- train[, corr_cols]
+
+# Obliczenie macierzy korelacji
+corr_matrix <- cor(corr_data, use = "pairwise.complete.obs")
+
+# Rysowanie heatmapy
+ggcorrplot(corr_matrix,
+           hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 3,
+           method = "square",
+           colors = c("steelblue", "white", "darkgreen"),
+           title = "Macierz korelacji",
+           ggtheme = theme_minimal())
+
+corr_data <- train[, c('SEC_INSTAL_AMT', 'PERFORM_CNS_SCORE','NEW_ACCTS_IN_LAST_SIX_MONTHS', 
+                       'DELINQUENT_ACCTS_IN_LAST_SIX_MONTHS', 'AVERAGE_ACCT_AGE', 
+                       'CREDIT_HISTORY_LENGTH', 'NO_OF_INQUIRIES','age', 'disbursal_time')]
+
+# Obliczenie macierzy korelacji
+corr_matrix <- cor(corr_data, use = "pairwise.complete.obs")
+
+# Rysowanie heatmapy
+ggcorrplot(corr_matrix, 
+           hc.order = TRUE,                      # sortowanie wg hierarchicznego klastrowania
+           type = "lower",                       # tylko dolny trójkąt
+           lab = TRUE,                           # wyświetl wartości korelacji
+           lab_size = 3,                         # rozmiar etykiet
+           method = "square",                    # kwadratowe kafelki
+           colors = c("steelblue", "white", "darkgreen"),  # kolory
+           title = "Macierz korelacji", 
+           ggtheme = theme_minimal())      
+
+corr_data <- train[, c('PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE', 'PRI_SANCTIONED_AMOUNT', 'PERFORM_CNS_SCORE',
+                       'PRI_DISBURSED_AMOUNT', 'SEC_NO_OF_ACCTS', 'SEC_OVERDUE_ACCTS', 'SEC_CURRENT_BALANCE',
+                       'PRIMARY_INSTAL_AMT', 'SEC_INSTAL_AMT', 'NEW_ACCTS_IN_LAST_SIX_MONTHS', 
+                       'DELINQUENT_ACCTS_IN_LAST_SIX_MONTHS', 'CREDIT_HISTORY_LENGTH', 'NO_OF_INQUIRIES',
+                       'DISBURSED_AMOUNT_new', 'ASSET_COST_new', 'LTV_new', 'PRI_NO_OF_ACCTS_new',
+                       'age', 'disbursal_time')]
+
+# Oblicz macierz korelacji
+corr_matrix <- cor(corr_data, use = "pairwise.complete.obs")
+
+# Rysowanie heatmapy
+ggcorrplot(corr_matrix, 
+           hc.order = TRUE,                            # sortowanie wg hierarchicznego klastrowania
+           type = "lower",                             # dolna część macierzy
+           lab = TRUE,                                 # wyświetl etykiety
+           lab_size = 3,                               # rozmiar czcionki
+           method = "square",                          # kwadratowe kafelki
+           colors = c("steelblue", "white", "darkgreen"),  # kolory kafelków
+           title = "Macierz korelacji", 
+           ggtheme = theme_minimal())    
+
+# Wybór podzbioru kolumn z ramki danych 'train'
+train_con <- train[, c('EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG', 'AADHAR_FLAG', 'PAN_FLAG', 'VOTERID_FLAG',
+                       'DRIVING_FLAG', 'PASSPORT_FLAG', 'PERFORM_CNS_SCORE', 'PERFORM_CNS_SCORE_DESCRIPTION', 
+                       'PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE', 'PRI_DISBURSED_AMOUNT', 'SEC_NO_OF_ACCTS', 
+                       'SEC_OVERDUE_ACCTS', 'SEC_CURRENT_BALANCE', 'PRIMARY_INSTAL_AMT', 'SEC_INSTAL_AMT', 
+                       'DELINQUENT_ACCTS_IN_LAST_SIX_MONTHS', 'CREDIT_HISTORY_LENGTH', 'NO_OF_INQUIRIES',
+                       'LOAN_DEFAULT', 'DISBURSED_AMOUNT_new', 'ASSET_COST_new', 
+                       'LTV_new', 'age', 'disbursal_time')]
+
+train_bin <- train[, c('UNIQUEID', 'EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG', 'AADHAR_FLAG', 'PAN_FLAG', 
+                       'VOTERID_FLAG', 'DRIVING_FLAG', 'PASSPORT_FLAG', 'PERFORM_CNS_SCORE', 
+                       'PERFORM_CNS_SCORE_DESCRIPTION', 'PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE',
+                       'PRI_DISBURSED_AMOUNT', 'SEC_NO_OF_ACCTS', 'SEC_OVERDUE_ACCTS', 'SEC_CURRENT_BALANCE',
+                       'PRIMARY_INSTAL_AMT', 'SEC_INSTAL_AMT', 'DELINQUENT_ACCTS_IN_LAST_SIX_MONTHS', 
+                       'CREDIT_HISTORY_LENGTH', 'NO_OF_INQUIRIES', 'LOAN_DEFAULT',
+                       'DISBURSED_AMOUNT_bins', 'ASSET_COST_bins', 'LTV_bins',
+                       'PERFORM_CNS_SCORE_bins', 'PRI_NO_OF_ACCTS_bins', 'PRI_OVERDUE_ACCTS_bins', 
+                       'age', 'disbursal_time')]
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
