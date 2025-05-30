@@ -275,9 +275,8 @@ ggplot(train, aes(x = DISBURSAL_DATE, fill = LOAN_DEFAULT)) +
 ```
 
 ### Univariate analysis
+ First let's define a couple of useful functions that will help us quickly perform univariate analysis.
 ```{r}
-## Univariate analysis
-
 # Plot distribution of one feature
 
 plot_distribution <- function(feature, color = "steelblue") {
@@ -286,27 +285,38 @@ ggplot(train, aes_string(x = feature)) + geom_histogram(aes(y =
 geom_density(color = "black", size = 1, na.rm = TRUE) + labs(title =
 paste("Distribution of", feature), x = feature, y = "Density") +
 theme_minimal() }
+```
 
+```{r}
 # Plot distribution of multiple features, with TARGET = 1/0 on the same graph
 
-plot_distribution_comp <- function(features, nrow = 2) { plots <- list()
+plot_bar_comp <- function(var, nrow = 2) {
+  plot_list <- list()
+  
+  for (feature in var) {
+    p <- ggplot(train, aes_string(x = feature)) +
+      geom_bar(fill = "skyblue") +
+      labs(x = feature, y = "Count plot") +
+      theme_minimal(base_size = 12)
+    plot_list[[length(plot_list) + 1]] <- p
+  }
+  
+  ncol <- 2
+  do.call(grid.arrange, c(plot_list, nrow = nrow, ncol = ncol))
+}
 
-for (feature in features) { p <- ggplot(train, aes_string(x = feature,
-color = "factor(LOAN_DEFAULT)")) + geom_density(na.rm = TRUE, size =
-1.2) + labs(title = paste("Distribution of", feature), x = feature, y =
-"Density", color = "LOAN_DEFAULT") + theme_minimal() +
-scale_color_manual(values = c("0" = "deepskyblue", "1" = "deeppink"),
-labels = c("0 (No Default)", "1 (Default)")) plots[[length(plots) + 1]] <- p }
+```
 
-do.call(gridExtra::grid.arrange, c(plots, nrow = nrow)) }
-
+```{r}
 # Box Plot for one feature
 
 plot_box <- function(feature, color = "skyblue") { ggplot(train,
 aes_string(y = feature)) + geom_boxplot(fill = color, outlier.color =
 "red", na.rm = TRUE) + labs(title = paste("Box Plot of", feature), y =
 feature) + theme_minimal() }
+```
 
+```{r}
 # Bar Plot for one feature
 
 plot_bar <- function(feature) { ggplot(train, aes_string(y = feature,
@@ -316,6 +326,11 @@ name = "LOAN_DEFAULT", labels = c("No Default", "Default")) + labs(title
 = paste("Bar Plot of", feature, "by Loan Default"), y = feature, x =
 "Count") + theme_minimal() + theme( axis.text.y = element_text(size =
 10), plot.title = element_text(size = 14, face = "bold") ) }
+```
+
+Now, let's analyze the most important explanatory variable: **'DISBURSED_AMOUNT'**.
+
+```{r}
 summary(train$DISBURSED_AMOUNT)
 
 plot_distribution("DISBURSED_AMOUNT", "green")
@@ -323,227 +338,301 @@ plot_distribution("DISBURSED_AMOUNT", "green")
 plot_box("DISBURSED_AMOUNT", "green")
 
 ```
+Based on the box plot, we can observe the presence of the outliers. We will try two methods of dealing with outliers: replacing the outliers' values with a sample mean and binning. 
+But first, let's define functions that will speed up the outlier detection process. We will create a function that will calculate all necessary statistical values: mean, lower and upper threshold.
 
 ```{r}
-## Outlier Treatment
+outlier_data <- function(df, feature) {
+  # Number of observations
+  obs <- length(df[[feature]])
+  cat("No. of observations in column:", obs, "\n")
+  
+  # Descriptive statistics
+  data_mean <- mean(df[[feature]], na.rm = TRUE)
+  data_sd   <- sd(df[[feature]], na.rm = TRUE)
+  cat(sprintf("Statistics: Mean = %.3f, Std dev = %.3f\n", data_mean, data_sd))
+  
+  # Thresholds for outliers, set as 3 standard deviations
+  cut_off <- data_sd * 3
+  lower <- data_mean - cut_off
+  upper <- data_mean + cut_off
+  
+  # Outliers count
+  outliers <- df[[feature]][df[[feature]] < lower | df[[feature]] > upper]
+  cat("Identified outliers:", length(outliers), "\n")
+  
+  return(list(lower = lower, upper = upper, mean = data_mean))
+}
+```
+Now, let's play with smoothing the outliers. We will create the function that will impute the outstanding obseravtions. 
+```{r}
+impute_outlier <- function(vec, lower, upper, mean_val) {
+  sapply(vec, function(x) {
+    if (is.na(x)) {
+      return(NA)
+    } else if (x <= lower || x >= upper) {
+      return(mean_val)
+    } else {
+      return(x)
+    }
+  })
+}
+```
 
-#Number of observations in column
+```{r}
+disbursed_amount_stats <- outlier_data(train, 'DISBURSED_AMOUNT')
+```
 
-obs \<- length(train\$DISBURSED_AMOUNT) cat("No. of observations in
-column:", obs, "\n")
+We manage to identify more that 3000 outliers. Now we will replace the values with the mean. 
 
-# calculate summary statistics
+```{r}
+train$DISBURSED_AMOUNT_new <- impute_outlier(train$DISBURSED_AMOUNT, disbursed_amount_stats$lower, disbursed_amount_stats$upper, disbursed_amount_stats$mean)
 
-data_mean \<-
-mean(train$DISBURSED_AMOUNT, na.rm = TRUE) data_sd <- sd(train$DISBURSED_AMOUNT,
-na.rm = TRUE) cat(sprintf("Statistics: Mean = %.3f, Std dev = %.3f\n",
-data_mean, data_sd))
+# No. of observations after the imputation
 
-# identify outliers
+cat("No. of observations in column: ", length(train$DISBURSED_AMOUNT_new), "\n")
+```
+Now let's try binning. Firstly, we have too divide our variable's range into bins. We chose to divide it to 4 bins based on quantiles.
+```{r}
+bin_labels <- c("Low", "Medium", "High", "Extreme")
 
-cut_off \<- data_sd \* 3 lower \<- data_mean - cut_off upper \<-
-data_mean + cut_off
+quantiles <- quantile(train$DISBURSED_AMOUNT, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
 
-outliers \<- train$DISBURSED_AMOUNT[train$DISBURSED_AMOUNT \< lower \|
-train\$DISBURSED_AMOUNT \> upper] cat("Identified outliers:",
-length(outliers), "\n")
+# Quantile distribution
+train$DISBURSED_AMOUNT_bins <- cut(train$DISBURSED_AMOUNT,
+                                   breaks = quantiles,
+                                   include.lowest = TRUE,
+                                   labels = bin_labels)
 
-train$DISBURSED_AMOUNT_new <- sapply(train$DISBURSED_AMOUNT, function(x)
-{ if (is.na(x)) { return(NA) } else if (x \<= lower \|\| x \>= upper) {
-return(data_mean) } else { return(x) } })
-
-# No. of observations
-
-cat("No. of observations in column:",
-length(train\$DISBURSED_AMOUNT_new), "\n")
-
-bin_labels \<- c("Low", "Medium", "High", "Extreme")
-
-quantiles \<- quantile(train\$DISBURSED_AMOUNT, probs = c(0, 0.25, 0.5,
-0.75, 1), na.rm = TRUE)
-
-# Bin labels
-
-train$DISBURSED_AMOUNT_bins <- cut(train$DISBURSED_AMOUNT, breaks =
-quantiles, include.lowest = TRUE, labels = bin_labels)
-
-# No. of observations in each category
-
-table(train\$DISBURSED_AMOUNT_bins)
+table(train$DISBURSED_AMOUNT_bins)
 
 plot_bar("DISBURSED_AMOUNT_bins")
-
-summary(train\$ASSET_COST) plot_distribution \<- function(feature, color
-= "steelblue") { ggplot(train, aes_string(x = feature)) +
-geom_histogram(aes(y = ..density..), fill = color, bins = 100, alpha =
-0.7, na.rm = TRUE) + geom_density(color = "black", size = 1, na.rm =
-TRUE) + labs(title = paste("Distribution of", feature), x = feature, y =
-"Density") + theme_minimal() } plot_distribution("ASSET_COST", "tomato")
+```
+Now let's analyze another variable: **'ASSET_COST'**
+```{r}
+summary(train$ASSET_COST)
+plot_distribution <- function(feature, color = "steelblue") {
+  ggplot(train, aes_string(x = feature)) +
+    geom_histogram(aes(y = ..density..), fill = color, bins = 100, alpha = 0.7, na.rm = TRUE) +
+    geom_density(color = "black", size = 1, na.rm = TRUE) +
+    labs(title = paste("Distribution of", feature), x = feature, y = "Density") +
+    theme_minimal()
+}
+plot_distribution("ASSET_COST", "tomato")
 plot_box("ASSET_COST", "tomato")
+```
+Again, we can notice the presence of the outliers. We can apply similar approach as before.
 
-#Number of observations in column
+Imputation
+```{r}
+asset_cost_stats <- outlier_data(train, 'ASSET_COST')
+```
+Almost 4500 outliers detected - let's try smoothing them out with mean
+```{r}
+train$ASSET_COST_new <- impute_outlier(train$ASSET_COST, asset_cost_stats$lower, asset_cost_stats$upper, asset_cost_stats$mean)
 
-outlier_data \<- function(df, feature) { #Number of observations in
-column obs \<- length(df[[feature]]) cat("No. of observations in
-column:", obs, "\n")
+# No. of observations after the imputation
 
-\# calculate summary statistics data_mean \<- mean(df[[feature]], na.rm
-= TRUE) data_sd \<- sd(df[[feature]], na.rm = TRUE)
-cat(sprintf("Statistics: Mean = %.3f, Std dev = %.3f\n", data_mean,
-data_sd))
+cat("No. of observations in column: ", length(train$ASSET_COST_new), "\n")
+```
+Binning
+```{r}
+quantiles <- quantile(train$ASSET_COST, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
 
-\# identify outliers cut_off \<- data_sd \* 3 lower \<- data_mean -
-cut_off upper \<- data_mean + cut_off
+#Quantile distribution
+train$ASSET_COST_bins <- cut(train$ASSET_COST,
+                                   breaks = quantiles,
+                                   include.lowest = TRUE,
+                                   labels = bin_labels)
 
-outliers \<- df[[feature]][df[[feature]] \< lower \| df[[feature]] \>
-upper] cat("Identified outliers:", length(outliers), "\n")
-
-return(list(lower = lower, upper = upper, mean = data_mean)) }
-
-impute_outlier \<- function(vec, lower, upper, mean_val) { sapply(vec,
-function(x) { if (is.na(x)) { return(NA) } else if (x \<= lower \|\| x
-\>= upper) { return(mean_val) } else { return(x) } }) }
-outlier_data(train,"ASSET_COST")
-
-bin_labels \<- c("Low", "Medium", "High", "Extreme")
-
-stats_asset \<- outlier_data(train, "ASSET_COST")
-
-train$ASSET_COST_new <- impute_outlier(train$ASSET_COST,
-stats_asset$lower, stats_asset$upper, stats_asset\$mean)
-
-cat("No. of observations in column:",
-length(train\$DISBURSED_AMOUNT_new), "\n")
-
-outlier_data(train, "ASSET_COST_new")
-
-quantiles \<- quantile(train\$ASSET_COST, probs = c(0, 0.25, 0.5, 0.75,
-1), na.rm = TRUE)
-
-train$ASSET_COST_bins <- cut(train$ASSET_COST, breaks = quantiles,
-include.lowest = TRUE, labels = bin_labels)
-
-table(train\$ASSET_COST_bins)
+table(train$ASSET_COST_bins)
 
 plot_bar("ASSET_COST_bins")
 ```
-
+**'LTV'**
 ```{r}
-# LTV
-
-summary(train\$LTV) plot_distribution("LTV", "blue") plot_box("LTV",
-"blue") outlier_data(train,"LTV")
-
-ltv_stats \<- outlier_data(train, "LTV")
-
-train$LTV_new <- impute_outlier(train$LTV,
-ltv_stats$lower, ltv_stats$upper, ltv_stats\$mean)
-
-cat("No. of observations in column:", length(train\$LTV_new), "\n")
-
-outlier_data(train, "LTV_new")
-
-bin_labels \<- c("Low", "Medium", "High", "Extreme")
-
-ltv_quantiles \<- quantile(train\$LTV, probs = c(0, 0.25, 0.5, 0.75, 1),
-na.rm = TRUE)
-
-train$LTV_bins <- cut(train$LTV, breaks = ltv_quantiles, include.lowest
-= TRUE, labels = bin_labels)
-
-table(train$LTV_bins) plot_bar("LTV_bins") summary(train$PERFORM_CNS_SCORE)
-plot_distribution("PERFORM_CNS_SCORE", "blue")
-plot_box("PERFORM_CNS_SCORE", "blue")
-outlier_data(train,"PERFORM_CNS_SCORE")
-
-bin_labels \<- c("No History", "Very Low", "Low", "Medium", "High")
-cut_bins \<- c(-1, 10, 150, 350, 650, 1000)
-
-train$PERFORM_CNS_SCORE_bins <- cut(train$PERFORM_CNS_SCORE, breaks =
-cut_bins, labels = bin_labels, include.lowest = TRUE, right = TRUE)
-
-table(train\$PERFORM_CNS_SCORE_bins)
-
-plot_bar("PERFORM_CNS_SCORE_bins")
-
-train %\>% group_by(PERFORM_CNS_SCORE_DESCRIPTION,
-PERFORM_CNS_SCORE_bins) %\>% summarise(count = n(), .groups = "drop")
-%\>% arrange(desc(count))
-
-table(train\$PERFORM_CNS_SCORE_DESCRIPTION)
-
-gg \<- train %\>% group_by(PERFORM_CNS_SCORE_DESCRIPTION, LOAN_DEFAULT)
-%\>% summarise(counts = n(), .groups = "drop") %\>%
-group_by(PERFORM_CNS_SCORE_DESCRIPTION) %\>% mutate(percentage = counts
-/ sum(counts) \* 100) %\>% ungroup()
-
-print(gg)
-
-summary(train\$PRI_NO_OF_ACCTS)
-
-plot_distribution("PRI_NO_OF_ACCTS", "blue")
-
-plot_box("PRI_NO_OF_ACCTS", "blue")
-
-outlier_data(train,"PRI_NO_OF_ACCTS")
-
-stats_pri \<- outlier_data(train, "PRI_NO_OF_ACCTS")
-
-train$PRI_NO_OF_ACCTS_new <- impute_outlier(train$PRI_NO_OF_ACCTS,
-stats_pri$lower, stats_pri$upper, stats_pri\$mean)
-
-outlier_data(train, "PRI_NO_OF_ACCTS_new")
-
-bin_labels \<- c("One", "More than One") cut_bins \<- c(-1, 1, 1000)
-
-train$PRI_NO_OF_ACCTS_bins <- cut(train$PRI_NO_OF_ACCTS, breaks =
-cut_bins, labels = bin_labels, include.lowest = TRUE, right = TRUE)
-
-table(train\$PRI_NO_OF_ACCTS_bins)
-
-plot_bar("PRI_NO_OF_ACCTS_bins")
-
-summary(train\$PRI_OVERDUE_ACCTS) plot_box("PRI_OVERDUE_ACCTS", "blue")
-
-outlier_data(train,"PRI_OVERDUE_ACCTS")
-
-stats_overdue \<- outlier_data(train, "PRI_OVERDUE_ACCTS")
-
-train$PRI_OVERDUE_ACCTS_new <- impute_outlier(train$PRI_OVERDUE_ACCTS,
-stats_overdue$lower, stats_overdue$upper, stats_overdue\$mean)
-
-outlier_data(train, "PRI_OVERDUE_ACCTS_new")
-
-bin_labels \<- c("None", "One (or more)") cut_bins \<- c(-1, 0, 1000)
-
-train$PRI_OVERDUE_ACCTS_bins <- cut(train$PRI_OVERDUE_ACCTS, breaks =
-cut_bins, labels = bin_labels, include.lowest = TRUE, right = TRUE)
-
-table(train\$PRI_OVERDUE_ACCTS_bins)
-
-plot_bar("PRI_OVERDUE_ACCTS_bins")
-
-library(gridExtra)
+summary(train$LTV)
+plot_distribution <- function(feature, color = "steelblue") {
+  ggplot(train, aes_string(x = feature)) +
+    geom_histogram(aes(y = ..density..), fill = color, bins = 100, alpha = 0.7, na.rm = TRUE) +
+    geom_density(color = "black", size = 1, na.rm = TRUE) +
+    labs(title = paste("Distribution of", feature), x = feature, y = "Density") +
+    theme_minimal()
+}
+plot_distribution("LTV", "tomato")
+plot_box("LTV", "tomato")
+```
+Imputation
+```{r}
+LTV_stats <- outlier_data(train, 'LTV')
 ```
 
-# Let's look into data with lesser importance
+```{r}
+train$LTV_new <- impute_outlier(train$LTV, LTV_stats$lower, LTV_stats$upper, LTV_stats$mean)
 
-plot_bar_comp \<- function(features, nrow = 2) { plots \<- list()
+# No. of observations after the imputation
 
-for (feature in features) { p \<- ggplot(train, aes_string(x =
-"factor(LOAN_DEFAULT)", fill = "factor(LOAN_DEFAULT)")) + geom_bar(data
-= train, aes_string(y = "..count.."), position = "dodge", color =
-"black") + facet_wrap(as.formula(paste("\~", feature))) +
-scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"), name =
-"Loan Default", labels = c("No Default", "Default")) + labs(title =
-paste("Distribution by", feature), x = "LOAN_DEFAULT", y = "Count") +
-theme_minimal() plots[[length(plots) + 1]] \<- p }
+cat("No. of observations in column: ", length(train$LTV_new), "\n")
+```
+Binning
+```{r}
+quantiles <- quantile(train$LTV, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
 
-do.call(grid.arrange, c(plots, nrow = nrow)) }
+#Quantile distribution
+train$LTV_bins <- cut(train$LTV,
+                                   breaks = quantiles,
+                                   include.lowest = TRUE,
+                                   labels = bin_labels)
 
-var \<- c("MOBILENO_AVL_FLAG", "AADHAR_FLAG", "PAN_FLAG",
-"VOTERID_FLAG", "PASSPORT_FLAG", "DRIVING_FLAG") plot_bar_comp(var, nrow
-= 3)
+table(train$LTV_bins)
+
+plot_bar("LTV_bins")
+```
+**'PERFORM_CNS_SCORE'**
+```{r}
+summary(train$PERFORM_CNS_SCORE)
+plot_distribution <- function(feature, color = "steelblue") {
+  ggplot(train, aes_string(x = feature)) +
+    geom_histogram(aes(y = ..density..), fill = color, bins = 100, alpha = 0.7, na.rm = TRUE) +
+    geom_density(color = "black", size = 1, na.rm = TRUE) +
+    labs(title = paste("Distribution of", feature), x = feature, y = "Density") +
+    theme_minimal()
+}
+plot_distribution("PERFORM_CNS_SCORE", "tomato")
+plot_box("PERFORM_CNS_SCORE", "tomato")
+```
+Imputation
+```{r}
+perform_cns_score_stats <- outlier_data(train, 'PERFORM_CNS_SCORE')
+```
+
+```{r}
+train$PERFORM_CNS_SCORE_new <- impute_outlier(train$PERFORM_CNS_SCORE, perform_cns_score_stats$lower, perform_cns_score_stats$upper, perform_cns_score_stats$mean)
+
+# No. of observations after the imputation
+
+cat("No. of observations in column: ", length(train$PERFORM_CNS_SCORE_new), "\n")
+```
+Binning
+```{r}
+bin_labels = c("No History",'Very Low', "Low" ,'Medium', 'High')
+cut_bins = c(-1,10,150, 350, 650, 1000)
+
+quantiles <- quantile(train$PERFORM_CNS_SCORE, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
+
+#Quantile distribution
+train$PERFORM_CNS_SCORE_bins <- cut(train$PERFORM_CNS_SCORE,
+                                   breaks = cut_bins,
+                                   include.lowest = TRUE,
+                                   labels = bin_labels)
+
+table(train$PERFORM_CNS_SCORE_bins)
+
+plot_bar("PERFORM_CNS_SCORE_bins")
+```
+**'PERFORM_CNS_SCORE_DESCRIPTION'**
+```{r}
+train %>%
+  group_by(PERFORM_CNS_SCORE_DESCRIPTION, PERFORM_CNS_SCORE_bins) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(desc(count))
+
+table(train$PERFORM_CNS_SCORE_DESCRIPTION)
+
+gg <- train %>%
+  group_by(PERFORM_CNS_SCORE_DESCRIPTION, LOAN_DEFAULT) %>%
+  summarise(counts = n(), .groups = "drop") %>%
+  group_by(PERFORM_CNS_SCORE_DESCRIPTION) %>%
+  mutate(percentage = counts / sum(counts) * 100) %>%
+  ungroup()
+
+print(gg)
+```
+**'PRI_NO_OF_ACCTS'**
+```{r}
+summary(train$PRI_NO_OF_ACCTS)
+plot_distribution <- function(feature, color = "steelblue") {
+  ggplot(train, aes_string(x = feature)) +
+    geom_histogram(aes(y = ..density..), fill = color, bins = 100, alpha = 0.7, na.rm = TRUE) +
+    geom_density(color = "black", size = 1, na.rm = TRUE) +
+    labs(title = paste("Distribution of", feature), x = feature, y = "Density") +
+    theme_minimal()
+}
+plot_distribution("PRI_NO_OF_ACCTS", "tomato")
+plot_box("PRI_NO_OF_ACCTS", "tomato")
+```
+Imputation
+```{r}
+pri_no_of_accts_stats <- outlier_data(train, 'PRI_NO_OF_ACCTS')
+```
+
+```{r}
+train$PRI_NO_OF_ACCTS_new <- impute_outlier(train$PRI_NO_OF_ACCTS, pri_no_of_accts_stats$lower, pri_no_of_accts_stats$upper, pri_no_of_accts_stats$mean)
+
+# No. of observations after the imputation
+
+cat("No. of observations in column: ", length(train$PRI_NO_OF_ACCTS_new), "\n")
+```
+Binning
+```{r}
+bin_labels <- c("One", "More than One")
+cut_bins <- c(-1, 1, 1000)
+
+train$PRI_NO_OF_ACCTS_bins <- cut(train$PRI_NO_OF_ACCTS,
+                                   breaks = cut_bins,
+                                   include.lowest = TRUE,
+                                   labels = bin_labels)
+
+table(train$PRI_NO_OF_ACCTS_bins)
+
+plot_bar("PRI_NO_OF_ACCTS_bins")
+```
+**'PRI_OVERDUE_ACCTS'**
+```{r}
+summary(train$PRI_OVERDUE_ACCTS)
+plot_distribution <- function(feature, color = "steelblue") {
+  ggplot(train, aes_string(x = feature)) +
+    geom_histogram(aes(y = ..density..), fill = color, bins = 100, alpha = 0.7, na.rm = TRUE) +
+    geom_density(color = "black", size = 1, na.rm = TRUE) +
+    labs(title = paste("Distribution of", feature), x = feature, y = "Density") +
+    theme_minimal()
+}
+plot_distribution("PRI_OVERDUE_ACCTS", "tomato")
+plot_box("PRI_OVERDUE_ACCTS", "tomato")
+```
+Imputation
+```{r}
+pri_overdue_accts_stats <- outlier_data(train, 'PRI_OVERDUE_ACCTS')
+```
+
+```{r}
+train$PRI_OVERDUE_ACCTS_new <- impute_outlier(train$PRI_OVERDUE_ACCTS, pri_overdue_accts_stats$lower, pri_overdue_accts_stats$upper, pri_overdue_accts_stats$mean)
+
+# No. of observations after the imputation
+
+cat("No. of observations in column: ", length(train$PRI_OVERDUE_ACCTS_new), "\n")
+```
+Binning
+```{r}
+bin_labels <- c("None", "One (or more)")
+cut_bins <- c(-1, 0, 1000)
+
+train$PRI_OVERDUE_ACCTS_bins <- cut(train$PRI_OVERDUE_ACCTS,
+                                   breaks = cut_bins,
+                                   include.lowest = TRUE,
+                                   labels = bin_labels)
+
+table(train$PPRI_OVERDUE_ACCTS_bins)
+
+plot_bar("PRI_OVERDUE_ACCTS_bins")
+```
+
+Let's look into data with lesser importance
+
+```{r}
+var <- c("MOBILENO_AVL_FLAG", "AADHAR_FLAG", "PAN_FLAG", "VOTERID_FLAG", "PASSPORT_FLAG", "DRIVING_FLAG")
+plot_bar_comp(var, nrow = 3)
+```
 
 # Employment Type
 
