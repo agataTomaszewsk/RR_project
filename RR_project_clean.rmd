@@ -1276,3 +1276,860 @@ cat("F1 Score", cm_rf$byClass["F1"], "\n")
 cat("Recall Score", cm_rf$byClass["Sensitivity"], "\n")
 cat("Balanced Accuracy Score", cm_rf$byClass["Balanced Accuracy"], "\n")
 ```
+
+## Dealing with Imbalanced Data
+
+## SMOTE 
+
+SMOTE or Synthetic Minority Oversampling Technique is used to create synthetic data. SMOTE uses a nearest neighbors algorithm to generate new and synthetic data we can use for training our model.
+
+```{r}
+library(caret)     # For train-test split
+library(DMwR2)     # For SMOTE implementation
+
+# Setting up testing and training sets (equivalent to train_test_split)
+set.seed(27)       # Set random seed for reproducibility (equivalent to random_state)
+train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  # 75% training (test_size=0.25)
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices,]
+y_test <- y[-train_indices,]
+
+X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+```
+
+```{r}
+library(smotefamily)
+# Apply SMOTE to handle class imbalance
+# Combine features and target for SMOTE
+train_data <- cbind(X_train, target = y_train)
+
+# Apply SMOTE (equivalent to sm.fit_sample)
+set.seed(27)       # Same random seed as in Python
+smote_result <- SMOTE(X_train, y_train, K = 5, dup_size = 1)
+X_train <- smote_result$data
+y_train <- X_train$class
+X_train$class <- NULL
+```
+
+**Stochastic Gradient Descent with Modified Huber Loss**
+```{r}
+#' SGD with Modified Huber Loss Implementation
+#'
+#' @param X Matrix or data frame of features
+#' @param y Vector of binary labels (0 or 1)
+#' @param learning_rate Initial learning rate
+#' @param epochs Number of epochs (passes through the data)
+#' @param batch_size Size of mini-batches
+#' @param alpha L2 regularization parameter
+#' @param shuffle Whether to shuffle the data at each epoch
+#' @param random_seed Random seed for reproducibility
+#' @param verbose Whether to print progress
+#'
+#' @return List containing weights, bias, and training history
+sgd_modified_huber <- function(X, y, learning_rate = 0.01, epochs = 100, 
+                               batch_size = 32, alpha = 0.0001, 
+                               shuffle = TRUE, random_seed = NULL, 
+                               verbose = TRUE) {
+  # Set random seed if provided
+  if (!is.null(random_seed)) {
+    set.seed(random_seed)
+  }
+  
+  # Ensure X is a matrix
+  if (is.data.frame(X)) {
+    X <- as.matrix(X)
+  }
+  
+  # Initialize parameters
+  n_samples <- nrow(X)
+  n_features <- ncol(X)
+  w <- rep(0, n_features)  # Weights initialized to zeros
+  b <- 0                   # Bias term initialized to zero
+  
+  # Initialize training history
+  history <- data.frame(epoch = integer(), loss = numeric())
+  
+  # Modified Huber loss gradient function
+  modified_huber_gradient <- function(y_true, y_pred) {
+    # Calculate margin = y * (w*x + b)
+    margin <- y_true * y_pred
+    
+    # Calculate gradients based on the margin
+    gradients <- rep(0, length(margin))
+    
+    # For margin > 1: gradient = 0
+    # For -1 < margin < 1: gradient = (1 - margin) * (-y)
+    # For margin < -1: gradient = (-y)
+    
+    case1 <- margin <= -1
+    case2 <- margin > -1 & margin < 1
+    
+    gradients[case1] <- -y_true[case1]
+    gradients[case2] <- -y_true[case2] * (1 - margin[case2])
+    
+    return(gradients)
+  }
+  
+  # Shuffle function
+  shuffle_data <- function(X, y) {
+    idx <- sample(n_samples)
+    return(list(X = X[idx,], y = y[idx]))
+  }
+  
+  # Training loop
+  for (epoch in 1:epochs) {
+    epoch_loss <- 0
+    
+    # Shuffle data if requested
+    if (shuffle) {
+      shuffled <- shuffle_data(X, y)
+      X_epoch <- shuffled$X
+      y_epoch <- shuffled$y
+    } else {
+      X_epoch <- X
+      y_epoch <- y
+    }
+    
+    # Process mini-batches
+    for (i in seq(1, n_samples, by = batch_size)) {
+      # Get mini-batch
+      end_idx <- min(i + batch_size - 1, n_samples)
+      X_batch <- X_epoch[i:end_idx, , drop = FALSE]
+      y_batch <- y_epoch[i:end_idx]
+      
+      # Convert y to {-1, 1} for modified Huber loss
+      y_binary <- 2 * y_batch - 1
+      
+      # Forward pass
+      scores <- X_batch %*% w + b
+      
+      # Compute gradients
+      grads <- modified_huber_gradient(y_binary, scores)
+      
+      # Update parameters
+      grad_w <- t(X_batch) %*% grads / length(y_batch) + alpha * w
+      grad_b <- mean(grads)
+      
+      w <- w - learning_rate * grad_w
+      b <- b - learning_rate * grad_b
+      
+      # Compute loss for monitoring
+      loss_batch <- calculate_modified_huber_loss(y_binary, scores)
+      epoch_loss <- epoch_loss + loss_batch * length(y_batch)
+    }
+    
+    # Average loss for the epoch
+    epoch_loss <- epoch_loss / n_samples
+    
+    # Save history
+    history <- rbind(history, data.frame(epoch = epoch, loss = epoch_loss))
+    
+    # Print progress
+    if (verbose && epoch %% 10 == 0) {
+      cat(sprintf("Epoch %d/%d - Loss: %.4f\n", epoch, epochs, epoch_loss))
+    }
+  }
+  
+  # Return model parameters and history
+  return(list(
+    weights = w,
+    bias = b,
+    history = history
+  ))
+}
+
+# Helper function to calculate modified Huber loss
+calculate_modified_huber_loss <- function(y_true, scores) {
+  margin <- y_true * scores
+  
+  # Calculate loss based on the margin
+  losses <- rep(0, length(margin))
+  
+  # For margin > 1: loss = 0
+  # For -1 < margin < 1: loss = (1 - margin)²
+  # For margin < -1: loss = -4 * margin
+  
+  case1 <- margin <= -1
+  case2 <- margin > -1 & margin < 1
+  
+  losses[case1] <- -4 * margin[case1]
+  losses[case2] <- (1 - margin[case2])^2
+  
+  return(mean(losses))
+}
+
+# Prediction function
+predict_sgd <- function(X, model, threshold = 0.5) {
+  if (is.data.frame(X)) {
+    X <- as.matrix(X)
+  }
+  
+  # Calculate raw scores
+  scores <- X %*% model$weights + model$bias
+  
+  # Convert scores to probabilities (simplified sigmoid)
+  probs <- 1 / (1 + exp(-scores))
+  
+  # Return class predictions
+  return(ifelse(probs > threshold, 1, 0))
+}
+```
+
+```{r}
+# Example usage:
+# --------------------------------------
+# Assuming you have X_train, y_train, X_test, y_test
+y_train <- as.numeric(y_train)
+# # Fit the model
+model <- sgd_modified_huber(
+   X = X_train,
+   y = y_train,
+   learning_rate = 0.01,
+   epochs = 100,
+   batch_size = 32,
+   alpha = 0.0001,
+   shuffle = TRUE,
+   random_seed = 101,
+   verbose = TRUE
+ )
+#
+# # Make predictions
+ y_pred <- predict_sgd(X_test, model)
+#
+```
+
+```{r}
+conf_matrix <- confusionMatrix(factor(y_pred, levels = c(0,1)), y_test_factor)
+print(conf_matrix$table)
+print(paste0(round(conf_matrix$overall["Accuracy"], 2) * 100, "%"))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+
+**Decision Tree Classifier**
+```{r}
+# Load required packages
+library(rpart)      # For decision tree
+library(caret)      # For confusion matrix and cross-validation
+
+
+# Train model (equivalent to DecisionTreeClassifier)
+# Setting max_depth=10, min_samples_leaf=30, and random_state=101
+set.seed(101)  # Equivalent to random_state in Python
+
+# Train the decision tree
+dtree <- rpart(
+  formula = y_train ~ .,        # Formula: target depends on all features
+  data = cbind(X_train, y_train = y_train),  # Combined data frame
+  method = "class",             # For classification (use "anova" for regression)
+  control = rpart.control(
+    maxdepth = 10,              # Equivalent to max_depth
+    minsplit = 60,              # Minimum number of observations in node before split (approx 2*min_samples_leaf)
+    minbucket = 30,             # Equivalent to min_samples_leaf
+    cp = 0.001                  # Complexity parameter (smaller values = larger tree)
+  )
+)
+
+```
+
+```{r}
+# Predict on test set
+dtree_pred <- predict(dtree, X_test, type = "class")
+
+# Ensure predictions and actual values are factors with the same levels
+y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
+dtree_pred_factor <- factor(dtree_pred, levels = levels(y_test_factor))
+
+# Calculate confusion matrix
+conf_matrix <- confusionMatrix(dtree_pred_factor, y_test_factor)
+print(conf_matrix$table)
+
+# Calculate accuracy
+accuracy <- conf_matrix$overall["Accuracy"]
+print(paste0(round(accuracy * 100, 2), "%"))
+```
+
+```{r}
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+
+**Random Forest Classifier**
+```{r}
+set.seed(42)  # For reproducibility, you can use any seed value
+
+# Convert target to factor if it's a classification problem
+if(!is.factor(y_train)) {
+  y_train_factor <- factor(y_train)
+} else {
+  y_train_factor <- y_train
+}
+
+# Train the Random Forest model
+rfc <- randomForest(
+  x = X_train,              # Features
+  y = y_train_factor,       # Target variable (must be a factor for classification)
+  ntree = 10,               # Equivalent to n_estimators=10
+  importance = TRUE         # Calculate variable importance
+)
+
+# Predict on test set
+rfc_pred <- predict(rfc, X_test)
+```
+
+```{r}
+rfc_pred_factor <- factor(rfc_pred, levels = levels(y_test_factor))
+y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
+
+# Calculate confusion matrix
+conf_matrix <- confusionMatrix(rfc_pred_factor, y_test_factor)
+print(conf_matrix$table)
+
+# Calculate accuracy and print as percentage
+accuracy <- conf_matrix$overall["Accuracy"]
+print(paste0("Accuracy: ", round(accuracy * 100, 2), "%"))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+## Upsampling
+
+Upsampling can be defined as adding more copies of the minority class. Upsampling can be a good choice when you don’t have a ton of data to work with. (Not a good choice here though)
+
+```{r}
+y <- train_dummy["LOAN_DEFAULT_1"]
+
+X <- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT_1")]
+
+set.seed(27)       # Set random seed for reproducibility (equivalent to random_state)
+train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  # 75% training (test_size=0.25)
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices,]
+y_test <- y[-train_indices,]
+
+X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+```
+
+```{r}
+X <- cbind(X_train, LOAN_DEFAULT = y_train)
+
+# Make sure X is a data frame (if it wasn't already)
+X <- as.data.frame(X)
+
+# Step 2: Separate minority and majority classes
+# (equivalent to X[X.LOAN_DEFAULT==0] and X[X.LOAN_DEFAULT==1])
+not_fraud <- X %>% filter(LOAN_DEFAULT_1 == 0)
+fraud <- X %>% filter(LOAN_DEFAULT_1 == 1)
+
+# Print class distribution
+cat("Distribution before resampling:\n")
+cat("Non-fraud samples:", nrow(not_fraud), "\n")
+cat("Fraud samples:", nrow(fraud), "\n")
+```
+
+
+```{r}
+# Load required libraries
+library(dplyr)
+
+# Set seed for reproducibility (equivalent to random_state=27)
+set.seed(27)
+
+# Upsample the minority class (fraud) with replacement
+# Equivalent to: fraud_upsampled = resample(fraud, replace=True, n_samples=len(not_fraud), random_state=27)
+fraud_upsampled <- fraud %>%
+  slice_sample(n = nrow(not_fraud), replace = TRUE)
+
+# Combine majority class and upsampled minority class
+# Equivalent to: upsampled = pd.concat([not_fraud, fraud_upsampled])
+upsampled <- bind_rows(not_fraud, fraud_upsampled)
+
+# Check new class counts
+# Equivalent to: upsampled.LOAN_DEFAULT.value_counts()
+upsampled_counts <- upsampled %>%
+  count(LOAN_DEFAULT_1)
+print(upsampled_counts)
+
+# Separate features and target
+# Equivalent to:
+# y_train = upsampled.LOAN_DEFAULT
+# X_train = upsampled.drop('LOAN_DEFAULT', axis=1)
+y_train <- upsampled$LOAN_DEFAULT_1
+X_train <- upsampled %>% select(-LOAN_DEFAULT_1)
+
+# Print dimensions to verify
+cat("X_train dimensions:", dim(X_train)[1], "rows,", dim(X_train)[2], "columns\n")
+cat("y_train length:", length(y_train), "\n")
+```
+
+
+**Decision Tree Classifier**
+```{r}
+set.seed(101)  # Equivalent to random_state in Python
+
+# Train the decision tree
+dtree <- rpart(
+  formula = y_train ~ .,        # Formula: target depends on all features
+  data = cbind(X_train, y_train = y_train),  # Combined data frame
+  method = "class",             # For classification (use "anova" for regression)
+  control = rpart.control(
+    maxdepth = 10,              # Equivalent to max_depth
+    minsplit = 60,              # Minimum number of observations in node before split (approx 2*min_samples_leaf)
+    minbucket = 30,             # Equivalent to min_samples_leaf
+    cp = 0.001                  # Complexity parameter (smaller values = larger tree)
+  )
+)
+
+# Predict on test set
+dtree_pred <- predict(dtree, X_test, type = "class")
+
+# Ensure predictions and actual values are factors with the same levels
+y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
+dtree_pred_factor <- factor(dtree_pred, levels = levels(y_test_factor))
+
+# Calculate confusion matrix
+conf_matrix <- confusionMatrix(dtree_pred_factor, y_test_factor)
+print(conf_matrix$table)
+
+# Calculate accuracy
+accuracy <- conf_matrix$overall["Accuracy"]
+print(paste0(round(accuracy * 100, 2), "%"))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+**Stochastic Gradient Descent with Modified Huber Loss**
+```{r}
+# # Fit the model
+model <- sgd_modified_huber(
+   X = X_train,
+   y = y_train,
+   learning_rate = 0.01,
+   epochs = 100,
+   batch_size = 32,
+   alpha = 0.0001,
+   shuffle = TRUE,
+   random_seed = 101,
+   verbose = TRUE
+ )
+#
+# # Make predictions
+ y_pred <- predict_sgd(X_test, model)
+ conf_matrix <- confusionMatrix(factor(y_pred, levels = c(0,1)), y_test_factor)
+print(conf_matrix$table)
+print(paste0(round(conf_matrix$overall["Accuracy"], 2) * 100, "%"))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+**Random Forest Classifier**
+```{r}
+set.seed(42)  # For reproducibility, you can use any seed value
+
+# Convert target to factor if it's a classification problem
+if(!is.factor(y_train)) {
+  y_train_factor <- factor(y_train)
+} else {
+  y_train_factor <- y_train
+}
+
+# Train the Random Forest model
+rfc <- randomForest(
+  x = X_train,              # Features
+  y = y_train_factor,       # Target variable (must be a factor for classification)
+  ntree = 10,               # Equivalent to n_estimators=10
+  importance = TRUE         # Calculate variable importance
+)
+
+# Predict on test set
+rfc_pred <- predict(rfc, X_test)
+
+rfc_pred_factor <- factor(rfc_pred, levels = levels(y_test_factor))
+y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
+
+# Calculate confusion matrix
+conf_matrix <- confusionMatrix(rfc_pred_factor, y_test_factor)
+print(conf_matrix$table)
+
+# Calculate accuracy and print as percentage
+accuracy <- conf_matrix$overall["Accuracy"]
+print(paste0("Accuracy: ", round(accuracy * 100, 2), "%"))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+## Downsampling
+
+Undersampling can be defined as removing some observations of the majority class. Undersampling can be a good choice when you have a ton of data -think millions of rows. But a drawback is that we are removing information that may be valuable. This could lead to underfitting and poor generalization to the test set.
+
+```{r}
+y <- train_dummy["LOAN_DEFAULT_1"]
+
+X <- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT_1")]
+
+set.seed(27)       # Set random seed for reproducibility (equivalent to random_state)
+train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  # 75% training (test_size=0.25)
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices,]
+y_test <- y[-train_indices,]
+
+X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+
+X <- cbind(X_train, LOAN_DEFAULT = y_train)
+
+# Make sure X is a data frame (if it wasn't already)
+X <- as.data.frame(X)
+
+# Step 2: Separate minority and majority classes
+# (equivalent to X[X.LOAN_DEFAULT==0] and X[X.LOAN_DEFAULT==1])
+not_fraud <- X %>% filter(LOAN_DEFAULT_1 == 0)
+fraud <- X %>% filter(LOAN_DEFAULT_1 == 1)
+```
+
+```{r}
+set.seed(27)
+
+# Upsample the minority class (fraud) with replacement
+# Equivalent to: fraud_upsampled = resample(fraud, replace=True, n_samples=len(not_fraud), random_state=27)
+fraud_downsampled <- fraud %>%
+  slice_sample(n = nrow(not_fraud), replace = FALSE)
+
+# Combine majority class and upsampled minority class
+# Equivalent to: upsampled = pd.concat([not_fraud, fraud_upsampled])
+downsampled <- bind_rows(not_fraud, fraud_downsampled)
+
+# Check new class counts
+# Equivalent to: upsampled.LOAN_DEFAULT.value_counts()
+downsampled_counts <- downsampled %>%
+  count(LOAN_DEFAULT_1)
+print(downsampled_counts)
+
+# Separate features and target
+# Equivalent to:
+# y_train = upsampled.LOAN_DEFAULT
+# X_train = upsampled.drop('LOAN_DEFAULT', axis=1)
+y_train <- downsampled$LOAN_DEFAULT_1
+X_train <- downsampled %>% select(-LOAN_DEFAULT_1)
+```
+**Decision Tree Classifier**
+```{r}
+set.seed(101)  # Equivalent to random_state in Python
+
+# Train the decision tree
+dtree <- rpart(
+  formula = y_train ~ .,        # Formula: target depends on all features
+  data = cbind(X_train, y_train = y_train),  # Combined data frame
+  method = "class",             # For classification (use "anova" for regression)
+  control = rpart.control(
+    maxdepth = 10,              # Equivalent to max_depth
+    minsplit = 60,              # Minimum number of observations in node before split (approx 2*min_samples_leaf)
+    minbucket = 30,             # Equivalent to min_samples_leaf
+    cp = 0.001                  # Complexity parameter (smaller values = larger tree)
+  )
+)
+
+# Predict on test set
+dtree_pred <- predict(dtree, X_test, type = "class")
+
+# Ensure predictions and actual values are factors with the same levels
+y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
+dtree_pred_factor <- factor(dtree_pred, levels = levels(y_test_factor))
+
+# Calculate confusion matrix
+conf_matrix <- confusionMatrix(dtree_pred_factor, y_test_factor)
+print(conf_matrix$table)
+
+# Calculate accuracy
+accuracy <- conf_matrix$overall["Accuracy"]
+print(paste0(round(accuracy * 100, 2), "%"))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+
+**Stochastic Gradient Descent with Modified Huber Loss**
+```{r}
+# # Fit the model
+model <- sgd_modified_huber(
+   X = X_train,
+   y = y_train,
+   learning_rate = 0.01,
+   epochs = 100,
+   batch_size = 32,
+   alpha = 0.0001,
+   shuffle = TRUE,
+   random_seed = 101,
+   verbose = TRUE
+ )
+#
+# # Make predictions
+ y_pred <- predict_sgd(X_test, model)
+ conf_matrix <- confusionMatrix(factor(y_pred, levels = c(0,1)), y_test_factor)
+print(conf_matrix$table)
+print(paste0(round(conf_matrix$overall["Accuracy"], 2) * 100, "%"))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+
+**Random Forest Classifier**
+```{r}
+set.seed(42)  # For reproducibility, you can use any seed value
+
+# Convert target to factor if it's a classification problem
+if(!is.factor(y_train)) {
+  y_train_factor <- factor(y_train)
+} else {
+  y_train_factor <- y_train
+}
+
+# Train the Random Forest model
+rfc <- randomForest(
+  x = X_train,              # Features
+  y = y_train_factor,       # Target variable (must be a factor for classification)
+  ntree = 10,               # Equivalent to n_estimators=10
+  importance = TRUE         # Calculate variable importance
+)
+
+# Predict on test set
+rfc_pred <- predict(rfc, X_test)
+
+rfc_pred_factor <- factor(rfc_pred, levels = levels(y_test_factor))
+y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
+
+# Calculate confusion matrix
+conf_matrix <- confusionMatrix(rfc_pred_factor, y_test_factor)
+print(conf_matrix$table)
+
+# Calculate accuracy and print as percentage
+accuracy <- conf_matrix$overall["Accuracy"]
+print(paste0("Accuracy: ", round(accuracy * 100, 2), "%"))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+
+## PCA
+
+```{r}
+y <- train_dummy["LOAN_DEFAULT_1"]
+
+X <- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT_1")]
+X$`EMPLOYMENT_TYPE_Self employed`[is.na(X$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+
+set.seed(27)       # Set random seed for reproducibility (equivalent to random_state)
+train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  # 75% training (test_size=0.25)
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices,]
+y_test <- y[-train_indices,]
+
+X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+```
+
+
+```{r}
+# Load required libraries
+library(stats)  # Contains prcomp() for PCA
+
+# Perform PCA
+# In R, we typically use prcomp() or princomp() for PCA
+# prcomp is generally preferred as it's based on SVD and more numerically stable
+
+# Equivalent to: pca = PCA(); pca.fit(X)
+pca_result <- prcomp(X_train, 
+                     center = TRUE,   # Center the variables (equivalent to StandardScaler)
+                     scale. = FALSE)  # By default, don't scale to unit variance
+
+# Cumulative variance explained
+cumulative_variance <- cumsum(variance_explained)
+plot(cumulative_variance, 
+     xlab = "Principal Component", 
+     ylab = "Cumulative Proportion of Variance Explained",
+     type = "b",
+     main = "Cumulative Variance Explained")
+
+```
+```{r}
+pca_result <- prcomp(X_train, 
+                     center = TRUE,   # Center the variables (equivalent to StandardScaler)
+                     scale. = FALSE,
+                     rank. = 17)  # By default, don't scale to unit variance
+
+# Print summary of the PCA
+summary(pca_result)
+
+# Visualize the proportion of variance explained by each component
+variance_explained <- pca_result$sdev^2 / sum(pca_result$sdev^2)
+plot(variance_explained, 
+     xlab = "Principal Component", 
+     ylab = "Proportion of Variance Explained",
+     type = "b",
+     main = "Scree Plot")
+
+# Cumulative variance explained
+cumulative_variance <- cumsum(variance_explained)
+plot(cumulative_variance, 
+     xlab = "Principal Component", 
+     ylab = "Cumulative Proportion of Variance Explained",
+     type = "b",
+     main = "Cumulative Variance Explained")
+
+# Access the principal components (equivalent to pca.components_ in Python)
+loadings <- pca_result$rotation
+
+# Access the transformed data (equivalent to pca.transform(X) in Python)
+X_train_PCA <- as.data.frame(pca_result$x)
+```
+
+**Decision Tree Classifier**
+```{r}
+set.seed(101)  # Equivalent to random_state in Python
+
+# Train the decision tree
+dtree <- rpart(
+  formula = y_train ~ .,        # Formula: target depends on all features
+  data = cbind(X_train_PCA, y_train = y_train),  # Combined data frame
+  method = "class",             # For classification (use "anova" for regression)
+  control = rpart.control(
+    maxdepth = 10,              # Equivalent to max_depth
+    minsplit = 60,              # Minimum number of observations in node before split (approx 2*min_samples_leaf)
+    minbucket = 30,             # Equivalent to min_samples_leaf
+    cp = 0.001                  # Complexity parameter (smaller values = larger tree)
+  )
+)
+
+# Predict on test set
+X_test_PCA <- predict(pca_result, newdata = X_test)
+X_test_PCA <- as.data.frame(X_test_PCA)
+
+dtree_pred <- predict(dtree, X_test_PCA, type = "class")
+
+# Ensure predictions and actual values are factors with the same levels
+y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
+dtree_pred_factor <- factor(dtree_pred, levels = levels(y_test_factor))
+
+# Calculate confusion matrix
+conf_matrix <- confusionMatrix(dtree_pred_factor, y_test_factor)
+print(conf_matrix$table)
+
+# Calculate accuracy
+accuracy <- conf_matrix$overall["Accuracy"]
+print(paste0(round(accuracy * 100, 2), "%"))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+```
+
+
+
+
+
