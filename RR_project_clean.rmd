@@ -28,10 +28,16 @@ problems in the financial domain.
 
 1.  [Data loading]
 2.  [Preliminary Data Analysis]
-3.  [Explanatory Data Analysis]. 
-    3.1. [Class distribution]. 
-    3.2. [Default vs. Disbursal date]. 
-    3.3. [Univariate analysis]
+3.  [Explanatory Data Analysis]
+    -   [Class distribution]
+    -   [Default vs. Disbursal date]
+    -   [Outlier Treatment]
+    -   [Univariate analysis]
+    -   [Feature Selection]
+        -   [Standardization of data]
+        -   [Dummy insertion]
+4.  [Modeling]
+    -   [Logistic Regression]
 
 ## Data loading
 
@@ -49,6 +55,9 @@ suppressWarnings({
 })
 library(ggcorrplot)
 library(readr)
+library(scales)
+library(fastDummies)
+library(plotly)
 ```
 
 ```{r}
@@ -189,9 +198,8 @@ Also, let's analyze the distribution between other categorical
 variables, such as 'EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG',
 'AADHAR_FLAG', 'PAN_FLAG', 'VOTERID_FLAG', 'DRIVING_FLAG' and
 'PASSPORT_FLAG'
-
+**'EMPLOYMENT_TYPE'**
 ```{r}
-cat("Employment type\n\n")
 train %>%
   group_by(EMPLOYMENT_TYPE, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
@@ -199,68 +207,68 @@ train %>%
   mutate(prop = count / sum(count)) %>%
   arrange(EMPLOYMENT_TYPE, LOAN_DEFAULT) %>%
   print(n = Inf)
-
-cat("##############\n")
-
-cat("Mobile Flag\n")
+```
+**'MOBILENO_AVL_FLAG'**
+```{r}
 train %>%
   group_by(MOBILENO_AVL_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
   group_by(MOBILENO_AVL_FLAG) %>%
   mutate(percentage = count / sum(count)) %>%
   print()
-
-# Aadhar Flag
-cat("Aadhar Flag\n")
+```
+**'AADHAR_FLAG'**
+```{r}
 train %>%
   group_by(AADHAR_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
   group_by(AADHAR_FLAG) %>%
   mutate(percentage = count / sum(count)) %>%
   print()
-
-cat("Pan Flag\n")
+```
+***'PAN_FLAG'**
+```{r}
 train %>%
   group_by(PAN_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
   group_by(PAN_FLAG) %>%
   mutate(percentage = count / sum(count)) %>%
   print()
-
-# Voter ID Flag
-cat("Voter ID Flag\n")
+```
+**'VOTERID_FLAG'**
+```{r}
 train %>%
   group_by(VOTERID_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
   group_by(VOTERID_FLAG) %>%
   mutate(percentage = count / sum(count)) %>%
   print()
-
-cat("Driving L Flag\n")
+```
+**'DRIVING_FLAG'**
+```{r}
 train %>%
   group_by(DRIVING_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
   group_by(DRIVING_FLAG) %>%
   mutate(percentage = count / sum(count)) %>%
   print()
-
-cat("Passport\n")
+```
+**'PASSPORT_FLAG'**
+```{r}
 train %>%
   group_by(PASSPORT_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
   group_by(PASSPORT_FLAG) %>%
   mutate(percentage = count / sum(count)) %>%
   print()
-
+```
+**Combined**
+```{r}
 train %>%
   group_by(LOAN_DEFAULT, EMPLOYMENT_TYPE, AADHAR_FLAG, PAN_FLAG, DRIVING_FLAG, PASSPORT_FLAG, VOTERID_FLAG) %>%
   summarise(count = n(), .groups = 'drop') %>%
   arrange(desc(count)) %>%
   print()
-
-train_0 <- train %>% filter(LOAN_DEFAULT == 0)
-train_1 <- train %>% filter(LOAN_DEFAULT == 1)
-
 ```
 
 We can observe that the distribution between defaulted and non-defaulted
@@ -269,8 +277,6 @@ client across all analyzed variables fluctuates around 21/79.
 ### Default vs. Disbursal date
 
 ```{r}
-train$DISBURSAL_DATE <- as.Date(train$DISBURSAL_DATE)
-
 train$LOAN_DEFAULT <- as.factor(train$LOAN_DEFAULT)
 
 ggplot(train, aes(x = DISBURSAL_DATE, fill = LOAN_DEFAULT)) +
@@ -285,7 +291,7 @@ ggplot(train, aes(x = DISBURSAL_DATE, fill = LOAN_DEFAULT)) +
   theme(legend.position = "none")
 ```
 
-### Univariate analysis
+### Outlier Treatment
 
 First let's define a couple of useful functions that will help us
 quickly perform univariate analysis.
@@ -322,6 +328,44 @@ plot_bar_comp <- function(var, nrow = 2) {
 ```
 
 ```{r}
+plot_distribution_comp <- function(data, variables, n_rows = 3, n_cols = 2) {
+  plot_list <- list()
+  
+  for (var in variables) {
+    # Check if variable has very large values that need scientific notation
+    scientific <- max(data[[var]], na.rm = TRUE) > 1e6
+    
+    p <- ggplot(data, aes_string(x = var, color = "factor(LOAN_DEFAULT)", 
+                                 fill = "factor(LOAN_DEFAULT)")) +
+      geom_density(alpha = 0.2) +
+      scale_color_manual(name = "",
+                       values = c("0" = "blue", "1" = "red"),
+                       labels = c("LOAN_DEFAULT = 0", "LOAN_DEFAULT = 1")) +
+      scale_fill_manual(name = "",
+                       values = c("0" = "blue", "1" = "red"),
+                       labels = c("LOAN_DEFAULT = 0", "LOAN_DEFAULT = 1")) +
+      labs(x = var, y = "Density plot") +
+      theme_bw() +
+      theme(panel.grid.major = element_line(color = "grey90"),
+            panel.grid.minor = element_line(color = "grey90"),
+            legend.position = "bottom",
+            legend.box = "horizontal",
+            plot.title = element_text(size = 11))
+    
+    # Use scientific notation for large value variables
+    if (scientific) {
+      p <- p + scale_x_continuous(labels = scientific_format())
+    }
+    
+    plot_list[[length(plot_list) + 1]] <- p
+  }
+  
+  # Arrange all plots in a grid
+  grid.arrange(grobs = plot_list, nrow = n_rows, ncol = n_cols)
+}
+```
+
+```{r}
 # Box Plot for one feature
 
 plot_box <- function(feature, color = "skyblue") { ggplot(train,
@@ -342,7 +386,7 @@ name = "LOAN_DEFAULT", labels = c("No Default", "Default")) + labs(title
 10), plot.title = element_text(size = 14, face = "bold") ) }
 ```
 
-Now, let's analyze the most important explanatory variable:
+Now, let's analyze important explanatory variable:
 **'DISBURSED_AMOUNT'**.
 
 ```{r}
@@ -696,132 +740,175 @@ var <- c("MOBILENO_AVL_FLAG", "AADHAR_FLAG", "PAN_FLAG", "VOTERID_FLAG", "PASSPO
 plot_bar_comp(var, nrow = 3)
 ```
 
-# Employment Type
+## Univariate Analysis
 
+**'EMPLOYMENT_TYPE'**
+
+```{r}
 ggplot(train, aes(x = EMPLOYMENT_TYPE, fill = factor(LOAN_DEFAULT))) +
 geom_bar(position = "dodge", color = "black") + labs(title =
 "EMPLOYMENT_TYPE vs LOAN_DEFAULT", x = "Employment Type", y = "Count",
 fill = "Loan Default") + theme_minimal() + scale_fill_manual(values =
 c("0" = "skyblue", "1" = "tomato"))
-
-install.packages('lubridate') library(lubridate)
-
-# Age is in days
-
-train \<- train %\>% mutate(age = as.numeric(Sys.Date() -
-DATE_OF_BIRTH))
-
-train$age <- as.integer(train$age) head(train\$age)
-
-str(train\$DISBURSAL_DATE)
-
-train \<- train %\>% mutate(disbursal_time =
-as.integer(difftime(Sys.Date(), DISBURSAL_DATE, units = "days")))
-
-head(train\$disbursal_time)
-
-# MANUFACTURER_ID
-
-ggplot(train, aes(x = factor(MANUFACTURER_ID), fill =
-factor(LOAN_DEFAULT))) + geom_bar(position = "dodge", color = "black") +
-labs(title = "MANUFACTURER_ID vs LOAN_DEFAULT", x = "MANUFACTURER_ID", y
-= "Count", fill = "Loan Default") + scale_fill_manual(values = c("0" =
-"skyblue", "1" = "tomato"), labels = c("No Default", "Default")) +
-theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust =
-1))
-
-ggplot(train, aes(x = factor(BRANCH_ID), fill = factor(LOAN_DEFAULT))) +
-geom_bar(position = "dodge", color = "black") + labs(title = "BRANCH_ID
-vs LOAN_DEFAULT", x = "BRANCH_ID", y = "Count", fill = "Loan Default") +
-scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"), labels =
-c("No Default", "Default")) + theme_minimal() + theme(axis.text.x =
-element_text(angle = 45, hjust = 1))
-
-plot_distribution_comp \<- function(features, nrow = 2) { plots \<-
-list()
-
-for (feature in features) { p \<- ggplot(train, aes_string(x = feature,
-fill = "factor(LOAN_DEFAULT)", color = "factor(LOAN_DEFAULT)")) +
-geom_histogram(aes(y = ..density..), bins = 100, position = "identity",
-alpha = 0.3, na.rm = TRUE) + geom_density(size = 1.2, na.rm = TRUE) +
-labs(title = paste("Distribution of", feature), x = feature, y =
-"Density", fill = "LOAN_DEFAULT", color = "LOAN_DEFAULT") +
-scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato")) +
-scale_color_manual(values = c("0" = "skyblue", "1" = "tomato")) +
-theme_minimal()
-
-```         
-plots[[length(plots) + 1]] <- p
 ```
 
-}
+**Age is in days**
 
-do.call(grid.arrange, c(plots, nrow = nrow)) } \# Let's see the new
-columns along with the less important continous variables
+```{r}
+now <- Sys.Date()
+train$DATE_OF_BIRTH <- as.Date(train$DATE_OF_BIRTH, format = "%d-%m-%Y")
+# If you want to handle possible future date-of-births (as in the commented-out Python line), you can do:
+# train$DATE_OF_BIRTH <- ifelse(train$DATE_OF_BIRTH < now, train$DATE_OF_BIRTH, train$DATE_OF_BIRTH - lubridate::years(100))
 
-var \<- c("PRI_NO_OF_ACCTS_new", "PRI_ACTIVE_ACCTS",
-"PRI_OVERDUE_ACCTS_new", "PRI_CURRENT_BALANCE", "PRI_SANCTIONED_AMOUNT",
-"PRI_DISBURSED_AMOUNT")
+# Calculate age in days
+train$age <- as.numeric(difftime(now, train$DATE_OF_BIRTH, units = "days"))
 
-plot_distribution_comp(var, nrow = 3)
+# Print first few ages
+print(head(train$age))
+```
 
-var \<- c("SEC_NO_OF_ACCTS", "SEC_ACTIVE_ACCTS", "SEC_OVERDUE_ACCTS",
+```{r}
+train$disbursal_time <- as.numeric(difftime(now, train$DISBURSAL_DATE, units = "days"))
+head(train$disbursal_time)
+```
+
+**'MANUFACTURER_ID'**
+
+```{r}
+ggplot(train, aes(x = factor(MANUFACTURER_ID), fill = factor(LOAN_DEFAULT))) +
+  geom_bar(position = "dodge", color = "black") +
+  labs(title = "MANUFACTURER_ID vs LOAN_DEFAULT",
+       x = "MANUFACTURER_ID",
+       y = "Count",
+       fill = "Loan Default") +
+  scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"),
+                    labels = c("No Default", "Default")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**'BRANCH_ID'**
+
+```{r}
+ggplot(train, aes(x = factor(BRANCH_ID), fill = factor(LOAN_DEFAULT))) +
+  geom_bar(position = "dodge", color = "black") +
+  labs(title = "BRANCH_ID vs LOAN_DEFAULT",
+       x = "BRANCH_ID",
+       y = "Count",
+       fill = "Loan Default") +
+  scale_fill_manual(values = c("0" = "skyblue", "1" = "tomato"),
+                    labels = c("No Default", "Default")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+var <- c("PRI_NO_OF_ACCTS_new", "PRI_ACTIVE_ACCTS", "PRI_OVERDUE_ACCTS_new",
+         "PRI_CURRENT_BALANCE", "PRI_SANCTIONED_AMOUNT", "PRI_DISBURSED_AMOUNT")
+
+plot_distribution_comp(train, var)
+```
+
+Let's see the new columns along with the less important continous
+variables
+
+```{r}
+var <- c("SEC_NO_OF_ACCTS", "SEC_ACTIVE_ACCTS", "SEC_OVERDUE_ACCTS",
 "SEC_CURRENT_BALANCE", "SEC_SANCTIONED_AMOUNT", "SEC_DISBURSED_AMOUNT")
 
-plot_distribution_comp(var, nrow = 3)
+plot_distribution_comp(train, var)
+```
 
 ## Feature Selection
 
-train \<- train %\>% select(-DATE_OF_BIRTH, -STATE_ID,
--EMPLOYEE_CODE_ID, -SUPPLIER_ID, -MANUFACTURER_ID, -CURRENT_PINCODE_ID,
--BRANCH_ID)
+Now we will proceed with the feature selection. First, we will drop the
+variables that won't be used in our model.
 
-library(ggcorrplot)
+```{r}
+train <- train %>%
+  select(-DATE_OF_BIRTH, -STATE_ID, -EMPLOYEE_CODE_ID,
+         -SUPPLIER_ID, -MANUFACTURER_ID, -CURRENT_PINCODE_ID, -BRANCH_ID)
+```
 
-corr_cols \<- c("PRI_ACTIVE_ACCTS", "PRI_CURRENT_BALANCE",
+Now, let's calucate the correlation matrix to see which features are
+correlated with each other in order to decrease a number of used
+variables.
+
+```{r}
+corr_cols <- c("PRI_ACTIVE_ACCTS", "PRI_CURRENT_BALANCE",
 "PRI_SANCTIONED_AMOUNT", "PRI_DISBURSED_AMOUNT", "SEC_NO_OF_ACCTS",
 "SEC_ACTIVE_ACCTS", "SEC_OVERDUE_ACCTS", "SEC_CURRENT_BALANCE",
 "SEC_SANCTIONED_AMOUNT", "SEC_DISBURSED_AMOUNT", "PRI_NO_OF_ACCTS_new",
 "PRI_OVERDUE_ACCTS_new")
 
-corr_data \<- train[, corr_cols]
+corr_data <- train[, corr_cols]
 
-corr_matrix \<- cor(corr_data, use = "pairwise.complete.obs")
+corr_matrix <- cor(corr_data, use = "pairwise.complete.obs")
 
-#Highly Correlated
+corr_melted <- melt(corr_matrix)
 
-ggcorrplot(corr_matrix, hc.order = TRUE, type = "lower", lab = TRUE,
-lab_size = 3, method = "square", colors = c("steelblue", "white",
-"darkgreen"), title = "Macierz korelacji", ggtheme = theme_minimal())
+# Create interactive heatmap
+plot_ly(data = corr_melted,
+        x = ~Var1,
+        y = ~Var2,
+        z = ~value,
+        zmin = -1,              
+        zmax = 1,
+        type = "heatmap",
+        colors = colorRamp(c("steelblue", "white", "darkgreen")))
+```
 
-#Not highly correlated with anyone: 'PRI_ACTIVE_ACCTS',
+Not highly correlated with anyone: 'PRI_ACTIVE_ACCTS',
 'PRI_CURRENT_BALANCE','PRI_SANCTIONED_AMOUNT',
-\#'PRI_DISBURSED_AMOUNT','SEC_OVERDUE_ACCTS'¶ \#'PRI_NO_OF_ACCTS_new',
-'PRI_OVERDUE_ACCTS_new'are perfectly positively correlated and hence
-keeping one \#'SEC_NO_OF_ACCTS', 'SEC_ACTIVE_ACCTS' are highly
-positively correlated, hence keeping one \#'SEC_CURRENT_BALANCE',
-'SEC_SANCTIONED_AMOUNT', 'SEC_DISBURSED_AMOUNT' are highly positively
-correlated, hence keeping one
+'PRI_DISBURSED_AMOUNT','SEC_OVERDUE_ACCTS'.
 
-corr_data \<- train[, c('SEC_INSTAL_AMT',
+'PRI_NO_OF_ACCTS_new','PRI_OVERDUE_ACCTS_new' are perfectly positively
+correlated and hence we are keeping only one.
+
+'SEC_NO_OF_ACCTS', 'SEC_ACTIVE_ACCTS' are highly positively correlated,
+hence we are keeping only one.
+
+'SEC_CURRENT_BALANCE', 'SEC_SANCTIONED_AMOUNT', 'SEC_DISBURSED_AMOUNT'
+are highly positively correlated, hence we are keeping only one.
+
+```{r}
+train <- train %>%
+  select(-PRI_OVERDUE_ACCTS_new, -SEC_ACTIVE_ACCTS, -SEC_SANCTIONED_AMOUNT, -SEC_DISBURSED_AMOUNT)
+```
+
+Now let's analyze other variables.
+
+```{r}
+corr_data <- train[, c('SEC_INSTAL_AMT',
 'PERFORM_CNS_SCORE','NEW_ACCTS_IN_LAST_SIX_MONTHS',
 'DELINQUENT_ACCTS_IN_LAST_SIX_MONTHS', 'AVERAGE_ACCT_AGE',
 'CREDIT_HISTORY_LENGTH', 'NO_OF_INQUIRIES','age', 'disbursal_time')]
 
-corr_matrix \<- cor(corr_data, use = "pairwise.complete.obs")
+corr_matrix <- cor(corr_data, use = "pairwise.complete.obs")
 
-ggcorrplot(corr_matrix, hc.order = TRUE,\
-type = "lower",\
-lab = TRUE,\
-lab_size = 3,\
-method = "square",\
-colors = c("steelblue", "white", "darkgreen"),\
-title = "Macierz korelacji", ggtheme = theme_minimal())
+corr_melted <- melt(corr_matrix)
 
-\#'AVERAGE_ACCT_AGE', 'CREDIT_HISTORY_LENGTH'are highly positively
-correlated and hence keeping one¶
+# Create interactive heatmap
+plot_ly(data = corr_melted,
+        x = ~Var1,
+        y = ~Var2,
+        z = ~value,
+        zmin = -1,            
+        zmax = 1,
+        type = "heatmap",
+        colors = colorRamp(c("steelblue", "white", "darkgreen")))
+```
 
-corr_data \<- train[, c('PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE',
+'AVERAGE_ACCT_AGE', 'CREDIT_HISTORY_LENGTH' are highly positively
+correlated and hence we are keeping only one.
+
+```{r}
+train <- train %>%
+  select(-AVERAGE_ACCT_AGE)
+```
+
+```{r}
+corr_data <- train[, c('PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE',
 'PRI_SANCTIONED_AMOUNT', 'PERFORM_CNS_SCORE', 'PRI_DISBURSED_AMOUNT',
 'SEC_NO_OF_ACCTS', 'SEC_OVERDUE_ACCTS', 'SEC_CURRENT_BALANCE',
 'PRIMARY_INSTAL_AMT', 'SEC_INSTAL_AMT', 'NEW_ACCTS_IN_LAST_SIX_MONTHS',
@@ -829,23 +916,39 @@ corr_data \<- train[, c('PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE',
 'NO_OF_INQUIRIES', 'DISBURSED_AMOUNT_new', 'ASSET_COST_new', 'LTV_new',
 'PRI_NO_OF_ACCTS_new', 'age', 'disbursal_time')]
 
-corr_matrix \<- cor(corr_data, use = "pairwise.complete.obs")
+corr_matrix <- cor(corr_data, use = "pairwise.complete.obs")
 
-ggcorrplot(corr_matrix, hc.order = TRUE,\
-type = "lower",\
-lab = TRUE,\
-lab_size = 1,\
-method = "square",\
-colors = c("steelblue", "white", "darkgreen"), title = "Macierz
-korelacji", ggtheme = theme_minimal())
+corr_melted <- melt(corr_matrix)
 
-#One out of 'PRI_SANCTIONED_AMOUNT', 'PRI_DISBURSED_AMOUNT' #One out of
-'LTV_new', 'PRI_NO_OF_ACCTS_new' #Eliminate
+# Create interactive heatmap
+plot_ly(data = corr_melted,
+        x = ~Var1,
+        y = ~Var2,
+        z = ~value,
+        zmin = -1,            
+        zmax = 1,
+        type = "heatmap",
+        colors = colorRamp(c("steelblue", "white", "darkgreen")))
+```
+
+Based on the correlation matrix we decided to: Choose one out of
+'PRI_SANCTIONED_AMOUNT', 'PRI_DISBURSED_AMOUNT' Choose one out of
+'LTV_new', 'PRI_NO_OF_ACCTS_new' And eliminate
 'NEW_ACCTS_IN_LAST_SIX_MONTHS
 
-#Preparing Datasets 1) Binned Variables 2) Continous variables
+```{r}
+train <- train %>%
+  select(-PRI_SANCTIONED_AMOUNT,-PRI_NO_OF_ACCTS_new,-NEW_ACCTS_IN_LAST_SIX_MONTHS)
+```
 
-train_con \<- train[, c('EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG',
+Now we will prepare our data sets. One will contain only continuous
+variables, with the outliers treated with imputation. Other will also
+contain binned variables.
+
+**Continuous Variables**
+
+```{r}
+train_con <- train[, c('EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG',
 'AADHAR_FLAG', 'PAN_FLAG', 'VOTERID_FLAG', 'DRIVING_FLAG',
 'PASSPORT_FLAG', 'PERFORM_CNS_SCORE', 'PERFORM_CNS_SCORE_DESCRIPTION',
 'PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE', 'PRI_DISBURSED_AMOUNT',
@@ -854,8 +957,12 @@ train_con \<- train[, c('EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG',
 'DELINQUENT_ACCTS_IN_LAST_SIX_MONTHS', 'CREDIT_HISTORY_LENGTH',
 'NO_OF_INQUIRIES', 'LOAN_DEFAULT', 'DISBURSED_AMOUNT_new',
 'ASSET_COST_new', 'LTV_new', 'age', 'disbursal_time')]
+```
 
-train_bin \<- train[, c('UNIQUEID', 'EMPLOYMENT_TYPE',
+**Binned Variables**
+
+```{r}
+train_bin <- train[, c('UNIQUEID', 'EMPLOYMENT_TYPE',
 'MOBILENO_AVL_FLAG', 'AADHAR_FLAG', 'PAN_FLAG', 'VOTERID_FLAG',
 'DRIVING_FLAG', 'PASSPORT_FLAG', 'PERFORM_CNS_SCORE',
 'PERFORM_CNS_SCORE_DESCRIPTION', 'PRI_ACTIVE_ACCTS',
@@ -866,86 +973,23 @@ train_bin \<- train[, c('UNIQUEID', 'EMPLOYMENT_TYPE',
 'DISBURSED_AMOUNT_bins', 'ASSET_COST_bins', 'LTV_bins',
 'PERFORM_CNS_SCORE_bins', 'PRI_NO_OF_ACCTS_bins',
 'PRI_OVERDUE_ACCTS_bins', 'age', 'disbursal_time')]
-
-# Wymagane biblioteki
-
-library(ggplot2) library(reshape2)
-
-# Confusion Matrix
-
-plot_confusion_matrix \<- function(cm, classes, normalize = FALSE, title
-= "Confusion Matrix") {
-
-cm_df \<- as.data.frame(cm) colnames(cm_df) \<- c("True", "Predicted",
-"Freq")
-
-if (normalize) { cm_df \<- cm_df %\>% group_by(True) %\>% mutate(Freq =
-Freq / sum(Freq)) %\>% ungroup() }
-
-max_val \<- max(cm_df$Freq) cm_df$text_color \<- ifelse(cm_df\$Freq \>
-max_val / 2, "white", "black")
-
-ggplot(cm_df, aes(x = Predicted, y = True, fill = Freq)) +
-geom_tile(color = "white") + geom_text(aes(label = round(Freq, if
-(normalize) 2 else 0), color = text_color), size = 4) +
-scale_fill_gradient(low = "white", high = "blue") +
-scale_color_identity() + labs(title = title, x = "Predicted label", y =
-"True label") + theme_minimal() }
-
-# Precision, Recall, F1 Score
-
-show_metrics \<- function(cm) { cm \<- as.matrix(cm)
-
-tp \<- cm[1, 1] fn \<- cm[1, 0] fp \<- cm[0, 1] tn \<- cm[0, 0]
-
-precision \<- tp / (tp + fp) recall \<- tp / (tp + fn) f1_score \<- 2 \*
-((precision \* recall) / (precision + recall))
-
-cat(sprintf("Precision = %.3f\n", precision)) cat(sprintf("Recall =
-%.3f\n", recall)) cat(sprintf("F1_score = %.3f\n", f1_score)) }
-
-# Precision-recall curve
-
-plot_precision_recall \<- function(recall, precision) { df \<-
-data.frame(recall = recall, precision = precision)
-
-ggplot(df, aes(x = recall, y = precision)) + geom_step(direction = "hv",
-alpha = 0.2, color = "blue") + geom_area(stat = "step", alpha = 0.2,
-fill = "blue") + geom_line(size = 1.2, color = "blue") + xlim(0.0,
-1.0) + ylim(0.0, 1.05) + labs(title = "Precision Recall Curve", x =
-"Recall", y = "Precision") + theme_minimal() }
-
-# ROC curve
-
-plot_roc \<- function(fpr, tpr) { df \<- data.frame(fpr = fpr, tpr =
-tpr)
-
-ggplot(df, aes(x = fpr, y = tpr)) + geom_line(color = "blue", size =
-1.2) + geom_abline(slope = 1, intercept = 0, linetype = "dashed", color
-= "black", size = 1) + xlim(0.0, 0.001) + ylim(0.0, 1.05) + labs(title =
-"ROC Curve", x = "False Positive Rate", y = "True Positive Rate") +
-theme_minimal() }
-
-#feature importance plot
-
-plot_feature_importance \<- function(model, predictors) { tmp \<-
-data.frame( Feature = predictors, Feature_importance = model\$importance
-)
-
-tmp \<- tmp[order(tmp\$Feature_importance, decreasing = TRUE), ]
-
-ggplot(tmp, aes(x = reorder(Feature, Feature_importance), y =
-Feature_importance)) + geom_bar(stat = "identity", fill = "steelblue") +
-coord_flip() + labs(title = "Features importance", x = "Feature", y =
-"Feature importance") + theme_minimal() + theme(plot.title =
-element_text(size = 14)) }
+```
 
 ## Standardization of data
 
-scaleColumns \<- function(df, cols_to_scale) { for (col in
-cols_to_scale) { df[[col]] \<- scale(df[[col]]) } return(df) }
+Let's transform some of the variables for better modelling.
 
-scaled_df \<- scaleColumns(train_con, c('PERFORM_CNS_SCORE',
+```{r}
+scaleColumns <- function(df, cols_to_scale) { 
+  for (col in cols_to_scale) { 
+    df[[col]] <- scale(df[[col]]) 
+  } 
+  return(df) 
+  }
+```
+
+```{r}
+scaled_df <- scaleColumns(train_con, c('PERFORM_CNS_SCORE',
 'PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE', 'PRI_DISBURSED_AMOUNT',
 'SEC_NO_OF_ACCTS', 'SEC_OVERDUE_ACCTS', 'SEC_CURRENT_BALANCE',
 'PRIMARY_INSTAL_AMT', 'SEC_INSTAL_AMT',
@@ -954,27 +998,131 @@ scaled_df \<- scaleColumns(train_con, c('PERFORM_CNS_SCORE',
 'age', 'disbursal_time'))
 
 head(scaled_df)
+```
 
-library(fastDummies)
+## Dummy insertion
 
-train_dummy \<- fastDummies::dummy_cols( scaled_df, remove_first_dummy =
-TRUE,\
-remove_selected_columns = TRUE,\
-ignore_na = TRUE\
-)
+Let's turn the categorical variables into the dummy variables.
+
+```{r}
+train_dummy <- fastDummies::dummy_cols( scaled_df, remove_first_dummy = TRUE, remove_selected_columns = TRUE, ignore_na = TRUE)
 
 head(train_dummy)
+```
 
-library(caret) y \<- train_dummy[["LOAN_DEFAULT"]]
+Finally, let's divide our modified dataset into a train and test set.
 
-X \<- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT")]
+```{r}
+library(caret) 
+y <- train_dummy["LOAN_DEFAULT_1"]
 
-dim(X)
+X <- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT_1")]
 
-set.seed(101) train_index \<- createDataPartition(y, p = 0.8, list =
-FALSE) X_train \<- X[train_index, ] X_test \<- X[-train_index, ] y_train
-\<- y[train_index] y_test \<- y[-train_index]
+dim(y)
+```
 
-# Konfiguracja 10-krotnej walidacji krzyżowej z losowaniem
+```{r}
+library(caTools)
+set.seed(101) 
+split_indices <- caTools::sample.split(y, SplitRatio = 0.80)
 
-k_fold \<- trainControl(method = "cv", number = 10)
+# Create training and testing datasets
+X_train <- X[split_indices, ]
+X_test <- X[!split_indices, ]
+y_train <- y[split_indices]
+y_test <- y[!split_indices]
+
+k_fold <- trainControl(method = "cv", number = 10)
+```
+
+## Modeling
+
+Now we can proceed to modeling. Firstly, we will define a couple of
+functions that will help us int he modeling process.
+
+```{r}
+# Confusion Matrix
+
+plot_confusion_matrix <- function(cm, classes, normalize = FALSE, title = "Confusion Matrix") {
+  cm_df <- as.data.frame(cm) 
+  colnames(cm_df) <- c("True", "Predicted","Freq")
+  if (normalize) { 
+    cm_df <- cm_df %>% 
+      group_by(True) %>% 
+      mutate(Freq = Freq / sum(Freq)) %>% 
+      ungroup() }
+  
+  max_val <- max(cm_df$Freq) 
+  cm_df$text_color <- ifelse(cm_df$Freq >max_val / 2, "white", "black")
+  
+  ggplot(cm_df, aes(x = Predicted, y = True, fill = Freq)) +
+    geom_tile(color = "white") + geom_text(aes(label = round(Freq, if(normalize) 2 else 0), color = text_color), size = 4) +
+    scale_fill_gradient(low = "white", high = "blue") +
+    scale_color_identity() + labs(title = title, x = "Predicted label", y ="True label") + theme_minimal() 
+  }
+```
+
+```{r}
+# Precision, Recall, F1 Score
+
+show_metrics <- function(cm) { 
+  cm <- as.matrix(cm)
+  tp <- cm[1, 1] 
+  fn <- cm[1, 0] 
+  fp <- cm[0, 1] 
+  tn <- cm[0, 0]
+  
+  precision <- tp / (tp + fp) 
+  recall <- tp / (tp + fn) 
+  f1_score <- 2 *((precision * recall) / (precision + recall))
+  
+  cat(sprintf("Precision = %.3f\n", precision)) 
+  cat(sprintf("Recall =%.3f\n", recall)) 
+  cat(sprintf("F1_score = %.3f\n", f1_score)) 
+  }
+```
+
+```{r}
+# Precision-recall curve
+
+plot_precision_recall <- function(recall, precision) {
+  df <- data.frame(recall = recall, precision = precision)
+  
+  ggplot(df, aes(x = recall, y = precision)) + geom_step(direction = "hv",alpha = 0.2, color = "blue") + 
+    geom_area(stat = "step", alpha = 0.2,fill = "blue") + 
+    geom_line(size = 1.2, color = "blue") + 
+    xlim(0.0,1.0) + ylim(0.0, 1.05) + 
+    labs(title = "Precision Recall Curve", x ="Recall", y = "Precision") + 
+    theme_minimal() 
+  }
+```
+
+```{r}
+# ROC curve
+
+plot_roc <- function(fpr, tpr) { 
+  df <- data.frame(fpr = fpr, tpr =tpr)
+  
+  ggplot(df, aes(x = fpr, y = tpr)) + geom_line(color = "blue", size =1.2) + 
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color= "black", size = 1) + 
+    xlim(0.0, 0.001) + ylim(0.0, 1.05) + 
+    labs(title ="ROC Curve", x = "False Positive Rate", y = "True Positive Rate") +
+    theme_minimal() 
+  }
+```
+
+```{r}
+#feature importance plot
+
+plot_feature_importance <- function(model, predictors) { 
+  tmp <- data.frame( Feature = predictors, Feature_importance = model$importance)
+  tmp <- tmp[order(tmp$Feature_importance, decreasing = TRUE), ]
+  
+  ggplot(tmp, aes(x = reorder(Feature, Feature_importance), y =Feature_importance)) + 
+    geom_bar(stat = "identity", fill = "steelblue") +
+    coord_flip() + labs(title = "Features importance", x = "Feature", y ="Feature importance") + 
+    theme_minimal() + theme(plot.title = element_text(size = 14)) 
+  }
+```
+
+## Logistic Regression
