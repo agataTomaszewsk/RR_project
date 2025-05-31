@@ -1024,21 +1024,20 @@ dim(y)
 ```{r}
 library(caTools)
 set.seed(101) 
-split_indices <- caTools::sample.split(y, SplitRatio = 0.80)
+train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.80, list = FALSE)
 
 # Create training and testing datasets
-X_train <- X[split_indices, ]
-X_test <- X[!split_indices, ]
-y_train <- y[split_indices]
-y_test <- y[!split_indices]
+X_train <- X[train_indices, ]
+X_test <- X[-train_indices, ]
+y_train <- y[train_indices, ]
+y_test <- y[-train_indices, ]
 
 k_fold <- trainControl(method = "cv", number = 10)
 ```
 
 ## Modeling
 
-Now we can proceed to modeling. Firstly, we will define a couple of
-functions that will help us int he modeling process.
+Now we can proceed to modeling. Firstly, we will define a couple of functions that will help us in the modeling process.
 
 ```{r}
 # Confusion Matrix
@@ -1126,3 +1125,154 @@ plot_feature_importance <- function(model, predictors) {
 ```
 
 ## Logistic Regression
+
+```{r}
+print(class(y_train))
+```
+
+```{r}
+library(glmnet) 
+
+if(is.list(y_train) && length(y_train) == 1) {
+  y_train <- unlist(y_train)
+}
+logmodel <- glm(y_train ~ ., data = X_train, family = "binomial")
+
+# Make predictions on test set
+# For probabilities:
+log_probs <- predict(logmodel, newdata = X_test, type = "response")
+# For class predictions (equivalent to Python's predict):
+logpred <- ifelse(log_probs > 0.5, 1, 0)
+
+```
+
+```{r}
+# Print confusion matrix
+if(is.data.frame(logpred)) {
+  logpred <- as.vector(unlist(logpred))
+}
+if(is.list(y_test) && length(y_test) == 1) {
+  y_test <- unlist(y_test)
+}
+
+conf_matrix <- confusionMatrix(factor(logpred, levels = c(0,1)), factor(y_test, levels = c(0,1)))
+print(conf_matrix$table)
+
+# Print accuracy (as a percentage)
+accuracy <- conf_matrix$overall["Accuracy"]
+print(paste0("Accuracy: ", round(accuracy * 100, 2), "%"))
+```
+
+```{r}
+# Cross-validation
+# Define k-fold cross-validation control
+ctrl <- trainControl(method = "cv", number = 10)  # Assuming k_fold = 5 in your Python code
+
+# Perform cross-validation
+cv_model <- train(
+  x = as.matrix(X_train),
+  y = factor(y_train),
+  method = "glm",
+  family = "binomial",
+  trControl = ctrl,
+  metric = "Accuracy"
+)
+
+# Print cross-validated accuracy
+LOGCV <- cv_model$results$Accuracy
+print(paste0("Cross-validated accuracy: ", round(LOGCV * 100, 2), "%"))
+```
+
+```{r}
+cm <- conf_matrix <- confusionMatrix(factor(logpred, levels = c(0,1)), factor(y_test, levels = c(0,1)))
+
+# Extract and print the metrics (equivalent to the Python code)
+# Accuracy
+cat("Accuracy of model", cm$overall["Accuracy"], "\n")
+
+# F1 Score
+cat("F1 Score", cm$byClass["F1"], "\n")
+
+# Recall Score
+cat("Recall Score", cm$byClass["Sensitivity"], "\n")
+
+# Balanced Accuracy Score 
+cat("Balanced Accuracy Score", cm$byClass["Balanced Accuracy"], "\n")
+```
+
+```{r}
+total <- nrow(X_train)
+missing_data <- X_train %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "column name", values_to = "Total missing") %>%
+  mutate(`Percent missing` = (`Total missing` / total) * 100) %>%
+  arrange(desc(`Total missing`))
+print(missing_data)
+```
+```{r}
+X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+
+```
+
+## Random Forest
+```{r}
+library(randomForest)
+library(caret)
+library(RANN)
+
+# Train the Random Forest model
+# n_estimators=10 in Python is equivalent to ntree=10 in R
+rfc <- randomForest(
+  x = X_train,
+  y = factor(y_train),  # Target variable should be a factor for classification
+  ntree = 10            # Number of trees (equivalent to n_estimators in sklearn)
+)
+
+# Predict on test set
+rfc_pred <- predict(rfc, X_test)
+```
+
+```{r}
+# Ensure factors have same levels for confusion matrix
+y_test_factor <- factor(y_test, levels = levels(rfc_pred))
+  
+# Create confusion matrix and print it
+conf_matrix <- confusionMatrix(rfc_pred, y_test_factor)
+print(conf_matrix$table)
+
+# Print accuracy as percentage
+print(paste0(round(conf_matrix$overall["Accuracy"] * 100, 2), "%"))
+```
+```{r}
+print(class(X_train))
+```
+```{r}
+# Cross-validation (for the logistic regression model, equivalent to the Python code)
+# Assuming logmodel is already defined and k_fold value is known
+set.seed(101)
+ctrl <- trainControl(method = "cv", number = k_fold)
+
+rf_cv_model <- train(
+  x = X_train,             # Training features
+  y = factor(y_train),     # Target variable (as factor for classification)
+  method = "rf",           # Random Forest algorithm
+  metric = "Accuracy",     # Primary evaluation metric
+  trControl = ctrl,        # Cross-validation control settings
+  ntree = 100,             # Number of trees
+  tuneLength = 5           # Try 5 different mtry values
+)
+
+RFCV <- rf_cv_model$results$Accuracy
+print(paste0("Cross-validated accuracy: ", round(RFCV * 100, 2), "%"))
+```
+
+```{r}
+cm_rf <- confusionMatrix(factor(rfc_pred, levels=c(0,1)), factor(y_test, levels=c(0,1)), positive = "1")
+
+# Print results (equivalent to the Python code)
+cat("Accuracy of model", cm_rf$overall["Accuracy"], "\n")
+cat("F1 Score", cm_rf$byClass["F1"], "\n")
+cat("Recall Score", cm_rf$byClass["Sensitivity"], "\n")
+cat("Balanced Accuracy Score", cm_rf$byClass["Balanced Accuracy"], "\n")
+```
