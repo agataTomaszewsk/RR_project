@@ -28,10 +28,10 @@ problems in the financial domain.
 
 1.  [Data loading]
 2.  [Preliminary Data Analysis]
-3.  [Explanatory Data Analysis]
-  3.1. [Class distribution]
-  3.2. [Default vs Disbursal date]
-  3.3. [Univariate analysis]
+3.  [Explanatory Data Analysis]. 
+    3.1. [Class distribution]. 
+    3.2. [Default vs. Disbursal date]. 
+    3.3. [Univariate analysis]
 
 ## Data loading
 
@@ -99,11 +99,14 @@ is missing. We will treat the NA values as not employed.
 print(unique(train$EMPLOYMENT_TYPE))
 length(unique(train$EMPLOYMENT_TYPE))
 ```
-Let's analyze the structure of the data set. We can see that most of the variables are numeric. We see that 'AVERAGE_ACCT_AGE' and 'CREDIT_HISTORY_LENGHT' can be changed from characters to numbers. 
+
+Let's analyze the structure of the data set. We can see that most of the
+variables are numeric. We see that 'AVERAGE_ACCT_AGE' and
+'CREDIT_HISTORY_LENGHT' can be changed from characters to numbers.
+
 ```{r}
 str(train)
 ```
-
 
 ```{r}
 parse_age <- function(x) {
@@ -124,7 +127,8 @@ test <- test %>%
 
 ```
 
-Additionally, we changed the format of variables 'DATE_OF_BIRTH' and 'DISBURSAL_DATE' form object to date. 
+Additionally, we changed the format of variables 'DATE_OF_BIRTH' and
+'DISBURSAL_DATE' form object to date.
 
 ```{r}
 
@@ -143,9 +147,11 @@ str(train)
 ```
 
 ## Explanatory Data Analysis
+
 Now we can proceed with the EDA. Let's start with
 
 ### Class distribution
+
 We will analyze the distribution of the target variable 'LOAN_DEFAULT'.
 
 ```{r}
@@ -156,7 +162,6 @@ class_df <- train %>%
 
 formattable(class_df, list( UNIQUEID_count = color_bar("lightgreen") ))
 ```
-
 
 ```{r}
 colors <- c("0" = "deepskyblue", "1" = "deeppink")
@@ -179,7 +184,11 @@ cat(sprintf("Number of no defaults  : %d\n", count_default_0))
 cat(sprintf("%% of defaults          : %.2f%%\n", percentage_1))
 cat(sprintf("Number of defaults     : %d\n", count_default_1))
 ```
-Also, let's analyze the distribution between other categorical variables, such as 'EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG', 'AADHAR_FLAG', 'PAN_FLAG', 'VOTERID_FLAG', 'DRIVING_FLAG' and 'PASSPORT_FLAG'
+
+Also, let's analyze the distribution between other categorical
+variables, such as 'EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG',
+'AADHAR_FLAG', 'PAN_FLAG', 'VOTERID_FLAG', 'DRIVING_FLAG' and
+'PASSPORT_FLAG'
 
 ```{r}
 cat("Employment type\n\n")
@@ -253,7 +262,9 @@ train_0 <- train %>% filter(LOAN_DEFAULT == 0)
 train_1 <- train %>% filter(LOAN_DEFAULT == 1)
 
 ```
-We can observe that the distribution between defaulted and non-defaulted client across all analyzed variables fluctuates around 21/79. 
+
+We can observe that the distribution between defaulted and non-defaulted
+client across all analyzed variables fluctuates around 21/79.
 
 ### Default vs. Disbursal date
 
@@ -275,7 +286,10 @@ ggplot(train, aes(x = DISBURSAL_DATE, fill = LOAN_DEFAULT)) +
 ```
 
 ### Univariate analysis
- First let's define a couple of useful functions that will help us quickly perform univariate analysis.
+
+First let's define a couple of useful functions that will help us
+quickly perform univariate analysis.
+
 ```{r}
 # Plot distribution of one feature
 
@@ -328,7 +342,8 @@ name = "LOAN_DEFAULT", labels = c("No Default", "Default")) + labs(title
 10), plot.title = element_text(size = 14, face = "bold") ) }
 ```
 
-Now, let's analyze the most important explanatory variable: **'DISBURSED_AMOUNT'**.
+Now, let's analyze the most important explanatory variable:
+**'DISBURSED_AMOUNT'**.
 
 ```{r}
 summary(train$DISBURSED_AMOUNT)
@@ -338,8 +353,13 @@ plot_distribution("DISBURSED_AMOUNT", "green")
 plot_box("DISBURSED_AMOUNT", "green")
 
 ```
-Based on the box plot, we can observe the presence of the outliers. We will try two methods of dealing with outliers: replacing the outliers' values with a sample mean and binning. 
-But first, let's define functions that will speed up the outlier detection process. We will create a function that will calculate all necessary statistical values: mean, lower and upper threshold.
+
+Based on the box plot, we can observe the presence of the outliers. We
+will try two methods of dealing with outliers: replacing the outliers'
+values with a sample mean and binning. But first, let's define functions
+that will speed up the outlier detection process. We will create a
+function that will calculate all necessary statistical values: mean,
+lower and upper threshold.
 
 ```{r}
 outlier_data <- function(df, feature) {
@@ -364,7 +384,10 @@ outlier_data <- function(df, feature) {
   return(list(lower = lower, upper = upper, mean = data_mean))
 }
 ```
-Now, let's play with smoothing the outliers. We will create the function that will impute the outstanding obseravtions. 
+
+Now, let's play with smoothing the outliers. We will create the function
+that will impute the outstanding obseravtions.
+
 ```{r}
 impute_outlier <- function(vec, lower, upper, mean_val) {
   sapply(vec, function(x) {
@@ -383,7 +406,8 @@ impute_outlier <- function(vec, lower, upper, mean_val) {
 disbursed_amount_stats <- outlier_data(train, 'DISBURSED_AMOUNT')
 ```
 
-We manage to identify more that 3000 outliers. Now we will replace the values with the mean. 
+We manage to identify more that 3000 outliers. Now we will replace the
+values with the mean.
 
 ```{r}
 train$DISBURSED_AMOUNT_new <- impute_outlier(train$DISBURSED_AMOUNT, disbursed_amount_stats$lower, disbursed_amount_stats$upper, disbursed_amount_stats$mean)
@@ -392,7 +416,10 @@ train$DISBURSED_AMOUNT_new <- impute_outlier(train$DISBURSED_AMOUNT, disbursed_a
 
 cat("No. of observations in column: ", length(train$DISBURSED_AMOUNT_new), "\n")
 ```
-Now let's try binning. Firstly, we have too divide our variable's range into bins. We chose to divide it to 4 bins based on quantiles.
+
+Now let's try binning. Firstly, we have too divide our variable's range
+into bins. We chose to divide it to 4 bins based on quantiles.
+
 ```{r}
 bin_labels <- c("Low", "Medium", "High", "Extreme")
 
@@ -408,7 +435,9 @@ table(train$DISBURSED_AMOUNT_bins)
 
 plot_bar("DISBURSED_AMOUNT_bins")
 ```
+
 Now let's analyze another variable: **'ASSET_COST'**
+
 ```{r}
 summary(train$ASSET_COST)
 plot_distribution <- function(feature, color = "steelblue") {
@@ -421,13 +450,18 @@ plot_distribution <- function(feature, color = "steelblue") {
 plot_distribution("ASSET_COST", "tomato")
 plot_box("ASSET_COST", "tomato")
 ```
-Again, we can notice the presence of the outliers. We can apply similar approach as before.
+
+Again, we can notice the presence of the outliers. We can apply similar
+approach as before.
 
 Imputation
+
 ```{r}
 asset_cost_stats <- outlier_data(train, 'ASSET_COST')
 ```
+
 Almost 4500 outliers detected - let's try smoothing them out with mean
+
 ```{r}
 train$ASSET_COST_new <- impute_outlier(train$ASSET_COST, asset_cost_stats$lower, asset_cost_stats$upper, asset_cost_stats$mean)
 
@@ -435,7 +469,9 @@ train$ASSET_COST_new <- impute_outlier(train$ASSET_COST, asset_cost_stats$lower,
 
 cat("No. of observations in column: ", length(train$ASSET_COST_new), "\n")
 ```
+
 Binning
+
 ```{r}
 quantiles <- quantile(train$ASSET_COST, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
 
@@ -449,7 +485,9 @@ table(train$ASSET_COST_bins)
 
 plot_bar("ASSET_COST_bins")
 ```
+
 **'LTV'**
+
 ```{r}
 summary(train$LTV)
 plot_distribution <- function(feature, color = "steelblue") {
@@ -462,7 +500,9 @@ plot_distribution <- function(feature, color = "steelblue") {
 plot_distribution("LTV", "tomato")
 plot_box("LTV", "tomato")
 ```
+
 Imputation
+
 ```{r}
 LTV_stats <- outlier_data(train, 'LTV')
 ```
@@ -474,7 +514,9 @@ train$LTV_new <- impute_outlier(train$LTV, LTV_stats$lower, LTV_stats$upper, LTV
 
 cat("No. of observations in column: ", length(train$LTV_new), "\n")
 ```
+
 Binning
+
 ```{r}
 quantiles <- quantile(train$LTV, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
 
@@ -488,7 +530,9 @@ table(train$LTV_bins)
 
 plot_bar("LTV_bins")
 ```
+
 **'PERFORM_CNS_SCORE'**
+
 ```{r}
 summary(train$PERFORM_CNS_SCORE)
 plot_distribution <- function(feature, color = "steelblue") {
@@ -501,7 +545,9 @@ plot_distribution <- function(feature, color = "steelblue") {
 plot_distribution("PERFORM_CNS_SCORE", "tomato")
 plot_box("PERFORM_CNS_SCORE", "tomato")
 ```
+
 Imputation
+
 ```{r}
 perform_cns_score_stats <- outlier_data(train, 'PERFORM_CNS_SCORE')
 ```
@@ -513,7 +559,9 @@ train$PERFORM_CNS_SCORE_new <- impute_outlier(train$PERFORM_CNS_SCORE, perform_c
 
 cat("No. of observations in column: ", length(train$PERFORM_CNS_SCORE_new), "\n")
 ```
+
 Binning
+
 ```{r}
 bin_labels = c("No History",'Very Low', "Low" ,'Medium', 'High')
 cut_bins = c(-1,10,150, 350, 650, 1000)
@@ -530,7 +578,9 @@ table(train$PERFORM_CNS_SCORE_bins)
 
 plot_bar("PERFORM_CNS_SCORE_bins")
 ```
+
 **'PERFORM_CNS_SCORE_DESCRIPTION'**
+
 ```{r}
 train %>%
   group_by(PERFORM_CNS_SCORE_DESCRIPTION, PERFORM_CNS_SCORE_bins) %>%
@@ -548,7 +598,9 @@ gg <- train %>%
 
 print(gg)
 ```
+
 **'PRI_NO_OF_ACCTS'**
+
 ```{r}
 summary(train$PRI_NO_OF_ACCTS)
 plot_distribution <- function(feature, color = "steelblue") {
@@ -561,7 +613,9 @@ plot_distribution <- function(feature, color = "steelblue") {
 plot_distribution("PRI_NO_OF_ACCTS", "tomato")
 plot_box("PRI_NO_OF_ACCTS", "tomato")
 ```
+
 Imputation
+
 ```{r}
 pri_no_of_accts_stats <- outlier_data(train, 'PRI_NO_OF_ACCTS')
 ```
@@ -573,7 +627,9 @@ train$PRI_NO_OF_ACCTS_new <- impute_outlier(train$PRI_NO_OF_ACCTS, pri_no_of_acc
 
 cat("No. of observations in column: ", length(train$PRI_NO_OF_ACCTS_new), "\n")
 ```
+
 Binning
+
 ```{r}
 bin_labels <- c("One", "More than One")
 cut_bins <- c(-1, 1, 1000)
@@ -587,7 +643,9 @@ table(train$PRI_NO_OF_ACCTS_bins)
 
 plot_bar("PRI_NO_OF_ACCTS_bins")
 ```
+
 **'PRI_OVERDUE_ACCTS'**
+
 ```{r}
 summary(train$PRI_OVERDUE_ACCTS)
 plot_distribution <- function(feature, color = "steelblue") {
@@ -600,7 +658,9 @@ plot_distribution <- function(feature, color = "steelblue") {
 plot_distribution("PRI_OVERDUE_ACCTS", "tomato")
 plot_box("PRI_OVERDUE_ACCTS", "tomato")
 ```
+
 Imputation
+
 ```{r}
 pri_overdue_accts_stats <- outlier_data(train, 'PRI_OVERDUE_ACCTS')
 ```
@@ -612,7 +672,9 @@ train$PRI_OVERDUE_ACCTS_new <- impute_outlier(train$PRI_OVERDUE_ACCTS, pri_overd
 
 cat("No. of observations in column: ", length(train$PRI_OVERDUE_ACCTS_new), "\n")
 ```
+
 Binning
+
 ```{r}
 bin_labels <- c("None", "One (or more)")
 cut_bins <- c(-1, 0, 1000)
