@@ -38,10 +38,27 @@ problems in the financial domain.
         -   [Dummy insertion]
 4.  [Modeling]
     -   [Logistic Regression]
+    -   [Random Forest]
+    -   [Naive Bayes]
+    -   [Stochastic Gradient Descent]
+    -   [Decision Tree Classifier]
+    -   [XGBoost]
+5.  [Dealing with Imbalanced Data]
+    -   [SMOTE]
+    -   [Upsampling]
+    -   [Downsampling]
+    -   [PCA]
+6.  [Conclusions]
 
 ## Data loading
 
-```{r setup, message=FALSE}
+```{r}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, cache=TRUE)
+```
+
+```{r setup, message=FALSE, error=TRUE}
+install.packages(c("dplyr", "tidyr", "stringr", "formattable", "ggcorrplot", "ggplot2", "lubridate", "gridExtra", "readr", "scales", "fastDummies", "plotly", "reshape2", "randomForest", "caret", "RANN", "e1071", "MLmetrics", "xgboost", "DMwR2", "smotefamily", "glmnet", "rpart", "caTools", "progress", "stats"))
+
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 library(dplyr)
 library(tidyr)
@@ -53,11 +70,24 @@ suppressWarnings({
   library(lubridate)
   library(gridExtra)
 })
-library(ggcorrplot)
 library(readr)
 library(scales)
 library(fastDummies)
 library(plotly)
+library(reshape2)
+library(randomForest)
+library(caret)
+library(RANN)
+library(e1071)
+library(MLmetrics)
+library(xgboost)
+library(DMwR2) 
+library(smotefamily)
+library(glmnet)
+library(rpart)
+library(caTools)
+library(progress)
+library(stats)  
 ```
 
 ```{r}
@@ -68,7 +98,7 @@ df    <- bind_rows(train, test)
 
 ## Preliminary Data Analysis
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 cat("Shape of training dataframe: ", dim(train), "\n")
 cat("Shape of testing dataframe: ", dim(test), "\n")
 
@@ -79,19 +109,15 @@ cat("Shape of training dataframe after removing duplicates: ", dim(train), "\n")
 cat("Shape of testing dataframe after removing duplicates: ", dim(test), "\n")
 ```
 
-```{r inspection Variable Inspection}
-### Variable Inspection
-
+```{r inspection Variable Inspection, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 cat("Names of columns: ", colnames(train), "\n")
-
-
 ```
 
 We have 41 variables, no duplicates were detected. Overall, we have over
 230 thousand observations in our training set. Let's check whether the
 dataset has any missing values.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 total <- nrow(train)
 missing_data <- train %>%
   summarise(across(everything(), ~sum(is.na(.)))) %>%
@@ -104,7 +130,7 @@ print(missing_data)
 We can see that more that 3% of the 'EMPLOYMENT_TYPE' variable's values
 is missing. We will treat the NA values as not employed.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE}
 print(unique(train$EMPLOYMENT_TYPE))
 length(unique(train$EMPLOYMENT_TYPE))
 ```
@@ -113,11 +139,11 @@ Let's analyze the structure of the data set. We can see that most of the
 variables are numeric. We see that 'AVERAGE_ACCT_AGE' and
 'CREDIT_HISTORY_LENGHT' can be changed from characters to numbers.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE}
 str(train)
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE}
 parse_age <- function(x) {
   years <- as.numeric(str_extract(x, "\\d+(?=yrs)"))
   months <- as.numeric(str_extract(x, "\\d+(?=mon)"))
@@ -139,11 +165,9 @@ test <- test %>%
 Additionally, we changed the format of variables 'DATE_OF_BIRTH' and
 'DISBURSAL_DATE' form object to date.
 
-```{r}
-
+```{r, warning = FALSE, message = FALSE, cache=TRUE}
 train$DATE_OF_BIRTH <- as.Date(train$DATE_OF_BIRTH, format = "%d-%m-%Y")
 test$DATE_OF_BIRTH  <- as.Date(test$DATE_OF_BIRTH,  format = "%d-%m-%Y")
-
 
 train$DISBURSAL_DATE <- as.Date(train$DISBURSAL_DATE, format = "%d-%m-%Y")
 test$DISBURSAL_DATE  <- as.Date(test$DISBURSAL_DATE,  format = "%d-%m-%Y")
@@ -151,7 +175,7 @@ test$DISBURSAL_DATE  <- as.Date(test$DISBURSAL_DATE,  format = "%d-%m-%Y")
 
 Finally, we obtained the dataset shaped like this:
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 str(train)
 ```
 
@@ -163,7 +187,7 @@ Now we can proceed with the EDA. Let's start with
 
 We will analyze the distribution of the target variable 'LOAN_DEFAULT'.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 class_df <- train %>%
   group_by(LOAN_DEFAULT) %>%
   summarise(UNIQUEID_count = n()) %>%
@@ -172,7 +196,7 @@ class_df <- train %>%
 formattable(class_df, list( UNIQUEID_count = color_bar("lightgreen") ))
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 colors <- c("0" = "deepskyblue", "1" = "deeppink")
 
 ggplot(train, aes(x = factor(LOAN_DEFAULT), fill = factor(LOAN_DEFAULT))) +
@@ -197,9 +221,9 @@ cat(sprintf("Number of defaults     : %d\n", count_default_1))
 Also, let's analyze the distribution between other categorical
 variables, such as 'EMPLOYMENT_TYPE', 'MOBILENO_AVL_FLAG',
 'AADHAR_FLAG', 'PAN_FLAG', 'VOTERID_FLAG', 'DRIVING_FLAG' and
-'PASSPORT_FLAG'
-**'EMPLOYMENT_TYPE'**
-```{r}
+'PASSPORT_FLAG' **'EMPLOYMENT_TYPE'**
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train %>%
   group_by(EMPLOYMENT_TYPE, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
@@ -208,8 +232,10 @@ train %>%
   arrange(EMPLOYMENT_TYPE, LOAN_DEFAULT) %>%
   print(n = Inf)
 ```
+
 **'MOBILENO_AVL_FLAG'**
-```{r}
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train %>%
   group_by(MOBILENO_AVL_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
@@ -217,8 +243,10 @@ train %>%
   mutate(percentage = count / sum(count)) %>%
   print()
 ```
+
 **'AADHAR_FLAG'**
-```{r}
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train %>%
   group_by(AADHAR_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
@@ -226,8 +254,10 @@ train %>%
   mutate(percentage = count / sum(count)) %>%
   print()
 ```
-***'PAN_FLAG'**
-```{r}
+
+\***'PAN_FLAG'**
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train %>%
   group_by(PAN_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
@@ -235,8 +265,10 @@ train %>%
   mutate(percentage = count / sum(count)) %>%
   print()
 ```
+
 **'VOTERID_FLAG'**
-```{r}
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train %>%
   group_by(VOTERID_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
@@ -244,8 +276,10 @@ train %>%
   mutate(percentage = count / sum(count)) %>%
   print()
 ```
+
 **'DRIVING_FLAG'**
-```{r}
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train %>%
   group_by(DRIVING_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
@@ -253,8 +287,10 @@ train %>%
   mutate(percentage = count / sum(count)) %>%
   print()
 ```
+
 **'PASSPORT_FLAG'**
-```{r}
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train %>%
   group_by(PASSPORT_FLAG, LOAN_DEFAULT) %>%
   summarise(count = n(), .groups = 'drop') %>%
@@ -262,8 +298,10 @@ train %>%
   mutate(percentage = count / sum(count)) %>%
   print()
 ```
+
 **Combined**
-```{r}
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train %>%
   group_by(LOAN_DEFAULT, EMPLOYMENT_TYPE, AADHAR_FLAG, PAN_FLAG, DRIVING_FLAG, PASSPORT_FLAG, VOTERID_FLAG) %>%
   summarise(count = n(), .groups = 'drop') %>%
@@ -276,7 +314,7 @@ client across all analyzed variables fluctuates around 21/79.
 
 ### Default vs. Disbursal date
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 train$LOAN_DEFAULT <- as.factor(train$LOAN_DEFAULT)
 
 ggplot(train, aes(x = DISBURSAL_DATE, fill = LOAN_DEFAULT)) +
@@ -308,8 +346,7 @@ theme_minimal() }
 ```
 
 ```{r}
-# Plot distribution of multiple features, with TARGET = 1/0 on the same graph
-
+# Plot distribution bar plot of several features
 plot_bar_comp <- function(var, nrow = 2) {
   plot_list <- list()
   
@@ -324,10 +361,10 @@ plot_bar_comp <- function(var, nrow = 2) {
   ncol <- 2
   do.call(grid.arrange, c(plot_list, nrow = nrow, ncol = ncol))
 }
-
 ```
 
 ```{r}
+# Plot distribution plot of several features
 plot_distribution_comp <- function(data, variables, n_rows = 3, n_cols = 2) {
   plot_list <- list()
   
@@ -367,7 +404,6 @@ plot_distribution_comp <- function(data, variables, n_rows = 3, n_cols = 2) {
 
 ```{r}
 # Box Plot for one feature
-
 plot_box <- function(feature, color = "skyblue") { ggplot(train,
 aes_string(y = feature)) + geom_boxplot(fill = color, outlier.color =
 "red", na.rm = TRUE) + labs(title = paste("Box Plot of", feature), y =
@@ -376,7 +412,6 @@ feature) + theme_minimal() }
 
 ```{r}
 # Bar Plot for one feature
-
 plot_bar <- function(feature) { ggplot(train, aes_string(y = feature,
 fill = "factor(LOAN_DEFAULT)")) + geom_bar(position = "dodge", color =
 "black") + scale_fill_manual(values = c("0" = "skyblue", "1" = "pink"),
@@ -389,13 +424,12 @@ name = "LOAN_DEFAULT", labels = c("No Default", "Default")) + labs(title
 Now, let's analyze important explanatory variable:
 **'DISBURSED_AMOUNT'**.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 summary(train$DISBURSED_AMOUNT)
 
 plot_distribution("DISBURSED_AMOUNT", "green")
 
 plot_box("DISBURSED_AMOUNT", "green")
-
 ```
 
 Based on the box plot, we can observe the presence of the outliers. We
@@ -446,25 +480,24 @@ impute_outlier <- function(vec, lower, upper, mean_val) {
 }
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 disbursed_amount_stats <- outlier_data(train, 'DISBURSED_AMOUNT')
 ```
 
 We manage to identify more that 3000 outliers. Now we will replace the
 values with the mean.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train$DISBURSED_AMOUNT_new <- impute_outlier(train$DISBURSED_AMOUNT, disbursed_amount_stats$lower, disbursed_amount_stats$upper, disbursed_amount_stats$mean)
 
 # No. of observations after the imputation
-
 cat("No. of observations in column: ", length(train$DISBURSED_AMOUNT_new), "\n")
 ```
 
 Now let's try binning. Firstly, we have too divide our variable's range
 into bins. We chose to divide it to 4 bins based on quantiles.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 bin_labels <- c("Low", "Medium", "High", "Extreme")
 
 quantiles <- quantile(train$DISBURSED_AMOUNT, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
@@ -482,7 +515,7 @@ plot_bar("DISBURSED_AMOUNT_bins")
 
 Now let's analyze another variable: **'ASSET_COST'**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 summary(train$ASSET_COST)
 plot_distribution <- function(feature, color = "steelblue") {
   ggplot(train, aes_string(x = feature)) +
@@ -500,13 +533,13 @@ approach as before.
 
 Imputation
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 asset_cost_stats <- outlier_data(train, 'ASSET_COST')
 ```
 
 Almost 4500 outliers detected - let's try smoothing them out with mean
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train$ASSET_COST_new <- impute_outlier(train$ASSET_COST, asset_cost_stats$lower, asset_cost_stats$upper, asset_cost_stats$mean)
 
 # No. of observations after the imputation
@@ -516,7 +549,7 @@ cat("No. of observations in column: ", length(train$ASSET_COST_new), "\n")
 
 Binning
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 quantiles <- quantile(train$ASSET_COST, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
 
 #Quantile distribution
@@ -532,7 +565,7 @@ plot_bar("ASSET_COST_bins")
 
 **'LTV'**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 summary(train$LTV)
 plot_distribution <- function(feature, color = "steelblue") {
   ggplot(train, aes_string(x = feature)) +
@@ -547,11 +580,11 @@ plot_box("LTV", "tomato")
 
 Imputation
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 LTV_stats <- outlier_data(train, 'LTV')
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train$LTV_new <- impute_outlier(train$LTV, LTV_stats$lower, LTV_stats$upper, LTV_stats$mean)
 
 # No. of observations after the imputation
@@ -561,7 +594,7 @@ cat("No. of observations in column: ", length(train$LTV_new), "\n")
 
 Binning
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 quantiles <- quantile(train$LTV, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
 
 #Quantile distribution
@@ -577,7 +610,7 @@ plot_bar("LTV_bins")
 
 **'PERFORM_CNS_SCORE'**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 summary(train$PERFORM_CNS_SCORE)
 plot_distribution <- function(feature, color = "steelblue") {
   ggplot(train, aes_string(x = feature)) +
@@ -592,11 +625,11 @@ plot_box("PERFORM_CNS_SCORE", "tomato")
 
 Imputation
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 perform_cns_score_stats <- outlier_data(train, 'PERFORM_CNS_SCORE')
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train$PERFORM_CNS_SCORE_new <- impute_outlier(train$PERFORM_CNS_SCORE, perform_cns_score_stats$lower, perform_cns_score_stats$upper, perform_cns_score_stats$mean)
 
 # No. of observations after the imputation
@@ -606,7 +639,7 @@ cat("No. of observations in column: ", length(train$PERFORM_CNS_SCORE_new), "\n"
 
 Binning
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 bin_labels = c("No History",'Very Low', "Low" ,'Medium', 'High')
 cut_bins = c(-1,10,150, 350, 650, 1000)
 
@@ -625,7 +658,7 @@ plot_bar("PERFORM_CNS_SCORE_bins")
 
 **'PERFORM_CNS_SCORE_DESCRIPTION'**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train %>%
   group_by(PERFORM_CNS_SCORE_DESCRIPTION, PERFORM_CNS_SCORE_bins) %>%
   summarise(count = n(), .groups = "drop") %>%
@@ -645,7 +678,7 @@ print(gg)
 
 **'PRI_NO_OF_ACCTS'**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 summary(train$PRI_NO_OF_ACCTS)
 plot_distribution <- function(feature, color = "steelblue") {
   ggplot(train, aes_string(x = feature)) +
@@ -660,11 +693,11 @@ plot_box("PRI_NO_OF_ACCTS", "tomato")
 
 Imputation
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 pri_no_of_accts_stats <- outlier_data(train, 'PRI_NO_OF_ACCTS')
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train$PRI_NO_OF_ACCTS_new <- impute_outlier(train$PRI_NO_OF_ACCTS, pri_no_of_accts_stats$lower, pri_no_of_accts_stats$upper, pri_no_of_accts_stats$mean)
 
 # No. of observations after the imputation
@@ -674,7 +707,7 @@ cat("No. of observations in column: ", length(train$PRI_NO_OF_ACCTS_new), "\n")
 
 Binning
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 bin_labels <- c("One", "More than One")
 cut_bins <- c(-1, 1, 1000)
 
@@ -690,7 +723,7 @@ plot_bar("PRI_NO_OF_ACCTS_bins")
 
 **'PRI_OVERDUE_ACCTS'**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 summary(train$PRI_OVERDUE_ACCTS)
 plot_distribution <- function(feature, color = "steelblue") {
   ggplot(train, aes_string(x = feature)) +
@@ -705,11 +738,11 @@ plot_box("PRI_OVERDUE_ACCTS", "tomato")
 
 Imputation
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 pri_overdue_accts_stats <- outlier_data(train, 'PRI_OVERDUE_ACCTS')
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train$PRI_OVERDUE_ACCTS_new <- impute_outlier(train$PRI_OVERDUE_ACCTS, pri_overdue_accts_stats$lower, pri_overdue_accts_stats$upper, pri_overdue_accts_stats$mean)
 
 # No. of observations after the imputation
@@ -719,7 +752,7 @@ cat("No. of observations in column: ", length(train$PRI_OVERDUE_ACCTS_new), "\n"
 
 Binning
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 bin_labels <- c("None", "One (or more)")
 cut_bins <- c(-1, 0, 1000)
 
@@ -735,7 +768,7 @@ plot_bar("PRI_OVERDUE_ACCTS_bins")
 
 Let's look into data with lesser importance
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 var <- c("MOBILENO_AVL_FLAG", "AADHAR_FLAG", "PAN_FLAG", "VOTERID_FLAG", "PASSPORT_FLAG", "DRIVING_FLAG")
 plot_bar_comp(var, nrow = 3)
 ```
@@ -744,7 +777,7 @@ plot_bar_comp(var, nrow = 3)
 
 **'EMPLOYMENT_TYPE'**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 ggplot(train, aes(x = EMPLOYMENT_TYPE, fill = factor(LOAN_DEFAULT))) +
 geom_bar(position = "dodge", color = "black") + labs(title =
 "EMPLOYMENT_TYPE vs LOAN_DEFAULT", x = "Employment Type", y = "Count",
@@ -754,11 +787,9 @@ c("0" = "skyblue", "1" = "tomato"))
 
 **Age is in days**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 now <- Sys.Date()
 train$DATE_OF_BIRTH <- as.Date(train$DATE_OF_BIRTH, format = "%d-%m-%Y")
-# If you want to handle possible future date-of-births (as in the commented-out Python line), you can do:
-# train$DATE_OF_BIRTH <- ifelse(train$DATE_OF_BIRTH < now, train$DATE_OF_BIRTH, train$DATE_OF_BIRTH - lubridate::years(100))
 
 # Calculate age in days
 train$age <- as.numeric(difftime(now, train$DATE_OF_BIRTH, units = "days"))
@@ -767,14 +798,14 @@ train$age <- as.numeric(difftime(now, train$DATE_OF_BIRTH, units = "days"))
 print(head(train$age))
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train$disbursal_time <- as.numeric(difftime(now, train$DISBURSAL_DATE, units = "days"))
 head(train$disbursal_time)
 ```
 
 **'MANUFACTURER_ID'**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 ggplot(train, aes(x = factor(MANUFACTURER_ID), fill = factor(LOAN_DEFAULT))) +
   geom_bar(position = "dodge", color = "black") +
   labs(title = "MANUFACTURER_ID vs LOAN_DEFAULT",
@@ -789,7 +820,7 @@ ggplot(train, aes(x = factor(MANUFACTURER_ID), fill = factor(LOAN_DEFAULT))) +
 
 **'BRANCH_ID'**
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 ggplot(train, aes(x = factor(BRANCH_ID), fill = factor(LOAN_DEFAULT))) +
   geom_bar(position = "dodge", color = "black") +
   labs(title = "BRANCH_ID vs LOAN_DEFAULT",
@@ -802,7 +833,7 @@ ggplot(train, aes(x = factor(BRANCH_ID), fill = factor(LOAN_DEFAULT))) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 var <- c("PRI_NO_OF_ACCTS_new", "PRI_ACTIVE_ACCTS", "PRI_OVERDUE_ACCTS_new",
          "PRI_CURRENT_BALANCE", "PRI_SANCTIONED_AMOUNT", "PRI_DISBURSED_AMOUNT")
 
@@ -812,7 +843,7 @@ plot_distribution_comp(train, var)
 Let's see the new columns along with the less important continous
 variables
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 var <- c("SEC_NO_OF_ACCTS", "SEC_ACTIVE_ACCTS", "SEC_OVERDUE_ACCTS",
 "SEC_CURRENT_BALANCE", "SEC_SANCTIONED_AMOUNT", "SEC_DISBURSED_AMOUNT")
 
@@ -824,7 +855,7 @@ plot_distribution_comp(train, var)
 Now we will proceed with the feature selection. First, we will drop the
 variables that won't be used in our model.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 train <- train %>%
   select(-DATE_OF_BIRTH, -STATE_ID, -EMPLOYEE_CODE_ID,
          -SUPPLIER_ID, -MANUFACTURER_ID, -CURRENT_PINCODE_ID, -BRANCH_ID)
@@ -834,7 +865,7 @@ Now, let's calucate the correlation matrix to see which features are
 correlated with each other in order to decrease a number of used
 variables.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 corr_cols <- c("PRI_ACTIVE_ACCTS", "PRI_CURRENT_BALANCE",
 "PRI_SANCTIONED_AMOUNT", "PRI_DISBURSED_AMOUNT", "SEC_NO_OF_ACCTS",
 "SEC_ACTIVE_ACCTS", "SEC_OVERDUE_ACCTS", "SEC_CURRENT_BALANCE",
@@ -878,7 +909,7 @@ train <- train %>%
 
 Now let's analyze other variables.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 corr_data <- train[, c('SEC_INSTAL_AMT',
 'PERFORM_CNS_SCORE','NEW_ACCTS_IN_LAST_SIX_MONTHS',
 'DELINQUENT_ACCTS_IN_LAST_SIX_MONTHS', 'AVERAGE_ACCT_AGE',
@@ -907,7 +938,7 @@ train <- train %>%
   select(-AVERAGE_ACCT_AGE)
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 corr_data <- train[, c('PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE',
 'PRI_SANCTIONED_AMOUNT', 'PERFORM_CNS_SCORE', 'PRI_DISBURSED_AMOUNT',
 'SEC_NO_OF_ACCTS', 'SEC_OVERDUE_ACCTS', 'SEC_CURRENT_BALANCE',
@@ -988,7 +1019,7 @@ scaleColumns <- function(df, cols_to_scale) {
   }
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 scaled_df <- scaleColumns(train_con, c('PERFORM_CNS_SCORE',
 'PRI_ACTIVE_ACCTS', 'PRI_CURRENT_BALANCE', 'PRI_DISBURSED_AMOUNT',
 'SEC_NO_OF_ACCTS', 'SEC_OVERDUE_ACCTS', 'SEC_CURRENT_BALANCE',
@@ -1005,9 +1036,7 @@ head(scaled_df)
 
 Let's turn the categorical variables into the dummy variables.
 
-```{r}
-install.packages("fastDummies")
-library(fastDummies)
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 train_dummy <- fastDummies::dummy_cols( scaled_df, remove_first_dummy = TRUE, remove_selected_columns = TRUE, ignore_na = TRUE)
 
 head(train_dummy)
@@ -1015,8 +1044,7 @@ head(train_dummy)
 
 Finally, let's divide our modified dataset into a train and test set.
 
-```{r}
-library(caret) 
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 y <- train_dummy["LOAN_DEFAULT_1"]
 
 X <- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT_1")]
@@ -1024,8 +1052,7 @@ X <- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT_1")]
 dim(y)
 ```
 
-```{r}
-library(caTools)
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 set.seed(101) 
 train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.80, list = FALSE)
 
@@ -1034,20 +1061,19 @@ X_train <- X[train_indices, ]
 X_test <- X[-train_indices, ]
 y_train <- y[train_indices, ]
 y_test <- y[-train_indices, ]
-install.packages("caret")   # Run this once if caret is not installed
-library(caret)              # Load caret to access trainControl() and other functions
 
 k_fold <- trainControl(method = "cv", number = 10)
+X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self employed`)] <- 0
+X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
 ```
 
 ## Modeling
 
-Now we can proceed to modeling. Firstly, we will define a couple of functions that will help us in the modeling process.
+Now we can proceed to modeling. Firstly, we will define a couple of
+functions that will help us in the modeling process.
 
 ```{r}
 # Confusion Matrix
-library(ggplot2)
-library(dplyr)
 plot_confusion_matrix <- function(cm, classes, normalize = FALSE, title = "Confusion Matrix") {
   cm_df <- as.data.frame(cm) 
   colnames(cm_df) <- c("True", "Predicted","Freq")
@@ -1146,45 +1172,32 @@ print(class(y_train))
 
 ## Logistic Regression
 
-  ```{r}
-  print(class(y_train))
+```{r}
+print(class(y_train))
 ```
 
-```{r}
-library(glmnet) 
-
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 if(is.list(y_train) && length(y_train) == 1) {
   y_train <- unlist(y_train)
 }
 logmodel <- glm(y_train ~ ., data = X_train, family = "binomial")
 
-# Make predictions on test set
-# For probabilities:
 log_probs <- predict(logmodel, newdata = X_test, type = "response")
 # For class predictions (equivalent to Python's predict):
 logpred <- ifelse(log_probs > 0.5, 1, 0)
-
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 # Print confusion matrix
-library(caret)
 if(is.data.frame(logpred)) {
   logpred <- as.vector(unlist(logpred))
 }
 if(is.list(y_test) && length(y_test) == 1) {
   y_test <- unlist(y_test)
 }
-
-conf_matrix <- confusionMatrix(factor(logpred, levels = c(0,1)), factor(y_test, levels = c(0,1)))
-print(conf_matrix$table)
-
-# Print accuracy (as a percentage)
-accuracy <- conf_matrix$overall["Accuracy"]
-print(paste0("Accuracy: ", round(accuracy * 100, 2), "%"))
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 # Cross-validation
 # Define k-fold cross-validation control
 ctrl <- trainControl(method = "cv", number = 10)  # Assuming k_fold = 5 in your Python code
@@ -1204,103 +1217,53 @@ LOGCV <- cv_model$results$Accuracy
 print(paste0("Cross-validated accuracy: ", round(LOGCV * 100, 2), "%"))
 ```
 
-```{r}
-cm <- conf_matrix <- confusionMatrix(factor(logpred, levels = c(0,1)), factor(y_test, levels = c(0,1)))
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
+cm_log <- conf_matrix <- confusionMatrix(factor(logpred, levels = c(0,1)), factor(y_test, levels = c(0,1)))
+saveRDS(cm_log, "cm_log.rds")
 
-# Extract and print the metrics (equivalent to the Python code)
+# Extract and print the metrics 
 # Accuracy
-cat("Accuracy of model", cm$overall["Accuracy"], "\n")
-
+cat("Accuracy of model", cm_log$overall["Accuracy"], "\n")
 # F1 Score
-cat("F1 Score", cm$byClass["F1"], "\n")
-
+cat("F1 Score", cm_log$byClass["F1"], "\n")
 # Recall Score
-cat("Recall Score", cm$byClass["Sensitivity"], "\n")
-
+cat("Recall Score", cm_log$byClass["Sensitivity"], "\n")
 # Balanced Accuracy Score 
-cat("Balanced Accuracy Score", cm$byClass["Balanced Accuracy"], "\n")
-```
-
-```{r}
-total <- nrow(X_train)
-missing_data <- X_train %>%
-  summarise(across(everything(), ~sum(is.na(.)))) %>%
-  pivot_longer(everything(), names_to = "column name", values_to = "Total missing") %>%
-  mutate(`Percent missing` = (`Total missing` / total) * 100) %>%
-  arrange(desc(`Total missing`))
-print(missing_data)
-```
-```{r}
-X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self employed`)] <- 0
-X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
-
+cat("Balanced Accuracy Score", cm_log$byClass["Balanced Accuracy"], "\n")
 ```
 
 ## Random Forest
-```{r}
-library(randomForest)
-library(caret)
-library(RANN)
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
+set.seed(42)  
+
+if(!is.factor(y_train)) {
+  y_train_factor <- factor(y_train)
+} else {
+  y_train_factor <- y_train
+}
 
 # Train the Random Forest model
-# n_estimators=10 in Python is equivalent to ntree=10 in R
 rfc <- randomForest(
-  x = X_train,
-  y = factor(y_train),  # Target variable should be a factor for classification
-  ntree = 10            # Number of trees (equivalent to n_estimators in sklearn)
+  x = X_train,             
+  y = y_train_factor,      
+  ntree = 10,               
+  importance = TRUE         
 )
 
 # Predict on test set
 rfc_pred <- predict(rfc, X_test)
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 # Ensure factors have same levels for confusion matrix
-y_test_factor <- factor(y_test, levels = levels(rfc_pred))
-  
+y_test_factor <- factor(y_test)
+rfc_pred_factor <- factor(rfc_pred, levels = levels(y_test_factor))
+
 # Create confusion matrix and print it
-conf_matrix <- confusionMatrix(rfc_pred, y_test_factor)
-print(conf_matrix$table)
-
-# Print accuracy as percentage
-print(paste0(round(conf_matrix$overall["Accuracy"] * 100, 2), "%"))
-```
-```{r}
-print(class(X_train))
-```
-```{r}
-# Preprocess y_train outside the train() call
-if (is.list(y_train) || is.data.frame(y_train)) {
-  y_train <- unlist(y_train)
-}
-y_train <- factor(y_train)
-
-# Set number of CV folds
-k_fold <- 10  # or however many you want
-
-# Define cross-validation control
-set.seed(101)
-ctrl <- trainControl(method = "cv", number = k_fold)
-
-# Train the Random Forest model
-rf_cv_model <- train(
-  x = X_train,
-  y = y_train,
-  method = "rf",
-  metric = "Accuracy",
-  trControl = ctrl,
-  tuneLength = 5
-)
-
-
-# Extract and print the best cross-validated accuracy
-best_acc <- max(rf_cv_model$results$Accuracy)
-cat("Cross-validated accuracy: ", round(best_acc * 100, 2), "%\n")
-
-```
-
-```{r}
-cm_rf <- confusionMatrix(factor(rfc_pred, levels=c(0,1)), factor(y_test, levels=c(0,1)), positive = "1")
+cm_rf <- confusionMatrix(rfc_pred_factor, factor(y_test))
+print(cm_rf$table)
+saveRDS(cm_rf, "cm_rf.rds")
 
 # Print results (equivalent to the Python code)
 cat("Accuracy of model", cm_rf$overall["Accuracy"], "\n")
@@ -1308,54 +1271,35 @@ cat("F1 Score", cm_rf$byClass["F1"], "\n")
 cat("Recall Score", cm_rf$byClass["Sensitivity"], "\n")
 cat("Balanced Accuracy Score", cm_rf$byClass["Balanced Accuracy"], "\n")
 ```
+
 ## Naive Bayes
-```{r}
-# Load necessary library for Naive Bayes
-library(e1071)
-library(caret)
-# --- Naive Bayes Model ---
-# Train Gaussian Naive Bayes model
-# Ensure y_train is a factor for classification
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 nb_model <- naiveBayes(x = X_train, y = factor(y_train))
 
 # Predict on test set
-# For naiveBayes, type="class" gives the predicted labels
+
 nb_pred <- predict(nb_model, newdata = X_test, type = "class")
 
 # Ensure predictions and actual values are factors with consistent levels for confusion matrix
 y_test_factor <- factor(y_test, levels = levels(nb_pred))
 
 # Create confusion matrix and print it
-conf_matrix_nb <- confusionMatrix(nb_pred, y_test_factor)
-cat("--- Naive Bayes Confusion Matrix ---\n")
-print(conf_matrix_nb$table)
+cm_nb <- confusionMatrix(nb_pred, y_test_factor)
+saveRDS(cm_nb, "cm_nb.rds")
+print(cm_nb$table)
 
 # Print accuracy as percentage
-cat("\nAccuracy of model (Naive Bayes): ", round(conf_matrix_nb$overall["Accuracy"] * 100, 2), "%\n")
+cat("Accuracy of model (Naive Bayes): ", round(cm_nb$overall["Accuracy"] * 100, 2), "%\n")
+cat("F1 Score: ", cm_nb$byClass["F1"], "\n")
+cat("Recall Score (Sensitivity): ", cm_nb$byClass["Sensitivity"], "\n")
+cat("Balanced Accuracy Score: ", cm_nb$byClass["Balanced Accuracy"], "\n")
 
-# Print other metrics
-cat("F1 Score: ", conf_matrix_nb$byClass["F1"], "\n")
-cat("Recall Score (Sensitivity): ", conf_matrix_nb$byClass["Sensitivity"], "\n")
-cat("Balanced Accuracy Score: ", conf_matrix_nb$byClass["Balanced Accuracy"], "\n")
-
-set.seed(101) # For reproducibility
-nb_cv_model <- train(
-  x = X_train,             # Training features
-  y = factor(y_train),     # Target variable (as factor for classification)
-  method = "naive_bayes",  # Method for Naive Bayes (using caret's interface)
-  metric = "Accuracy",     # Primary evaluation metric
-  trControl = ctrl         # Cross-validation control settings
-)
-
-NBCV <- nb_cv_model$results$Accuracy[which.max(nb_cv_model$results$Accuracy)] # Get best accuracy from CV results
-cat("\nCross-validated accuracy (Naive Bayes): ", round(NBCV * 100, 2), "%\n")
 ```
-##Stochastic Gradient Descent
-```{r}
-library(caret)
-library(MLmetrics)  # For F1_Score, BalancedAccuracy
-library(e1071)      # For confusionMatrix
 
+## Stochastic Gradient Descent
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 set.seed(101)
 
 # Preprocess y_train
@@ -1379,13 +1323,16 @@ sgd_model <- train(
 
 # Predict on test data
 sgd_pred <- predict(sgd_model, X_test)
+```
 
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 # Confusion Matrix
-cm <- confusionMatrix(sgd_pred, y_test, positive = levels(y_test)[2])
-print(cm$table)
+cm_sgd <- confusionMatrix(sgd_pred, y_test, positive = levels(y_test)[2])
+saveRDS(cm_sgd, "cm_sgd.rds")
+print(cm_sgd$table)
 
 # Accuracy
-accuracy <- cm$overall["Accuracy"]
+accuracy <- cm_sgd$overall["Accuracy"]
 cat("Accuracy of model:", round(accuracy * 100, 2), "%\n")
 
 # F1 Score
@@ -1393,25 +1340,20 @@ f1 <- F1_Score(y_pred = sgd_pred, y_true = y_test, positive = levels(y_test)[2])
 cat("F1 Score:", round(f1, 3), "\n")
 
 # Recall (Sensitivity)
-recall <- cm$byClass["Sensitivity"]
+recall <- cm_sgd$byClass["Sensitivity"]
 cat("Recall Score:", round(recall, 3), "\n")
 
 # Balanced Accuracy
-balanced_acc <- BalancedAccuracy(y_pred = sgd_pred, y_true = y_test)
-cat("Balanced Accuracy Score:", round(balanced_acc, 3), "\n")
+cat("Balanced Accuracy Score:", cm_sgd$byClass["Balanced Accuracy"], "\n")
 
-# Cross-validated accuracy (already done in caret train, but here’s how to extract)
+# Cross-validated accuracy 
 cv_accuracy <- max(sgd_model$results$Accuracy)
 cat("Cross-validated accuracy:", round(cv_accuracy * 100, 2), "%\n")
 ```
 
 ## Decision Tree Classifier
-```{r}
-library(rpart)
-library(caret)
-library(MLmetrics)   # for F1_Score, BalancedAccuracy
-library(e1071)       # for confusionMatrix
 
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 set.seed(101)
 
 # Preprocess target variables
@@ -1429,7 +1371,7 @@ dtree_model <- train(
   x = X_train,
   y = y_train,
   method = "rpart",
-  tuneGrid = data.frame(cp = 0),  # cp = complexity parameter; we'll prune by maxdepth etc.
+  tuneGrid = data.frame(cp = 0),
   trControl = ctrl,
   control = rpart.control(maxdepth = 10, minbucket = 30, maxcompete = 0, maxsurrogate = 0)
 )
@@ -1438,11 +1380,12 @@ dtree_model <- train(
 dtree_pred <- predict(dtree_model, X_test)
 
 # Confusion matrix
-cm <- confusionMatrix(dtree_pred, y_test, positive = levels(y_test)[2])
-print(cm$table)
+cm_dt <- confusionMatrix(dtree_pred, y_test, positive = levels(y_test)[2])
+saveRDS(cm_dt, "cm_dt.rds")
+print(cm_dt$table)
 
 # Accuracy
-accuracy <- cm$overall["Accuracy"]
+accuracy <- cm_dt$overall["Accuracy"]
 cat("Accuracy of model:", round(accuracy * 100, 2), "%\n")
 
 # F1 Score
@@ -1450,91 +1393,102 @@ f1 <- F1_Score(y_pred = dtree_pred, y_true = y_test, positive = levels(y_test)[2
 cat("F1 Score:", round(f1, 3), "\n")
 
 # Recall (Sensitivity)
-recall <- cm$byClass["Sensitivity"]
+recall <- cm_dt$byClass["Sensitivity"]
 cat("Recall Score:", round(recall, 3), "\n")
 
 # Balanced Accuracy
-balanced_acc <- BalancedAccuracy(y_pred = dtree_pred, y_true = y_test)
-cat("Balanced Accuracy Score:", round(balanced_acc, 3), "\n")
+cat("Balanced Accuracy Score:", cm_dt$byClass["Balanced Accuracy"], "\n")
 
 # Cross-validated accuracy (already done during train)
 cv_accuracy <- max(dtree_model$results$Accuracy)
 cat("Cross-validated accuracy:", round(cv_accuracy * 100, 2), "%\n")
 
 ```
+
 ## XGBoost
+
 ```{r}
-library(xgboost)
-library(caret)
-library(MLmetrics)  # for F1_Score and BalancedAccuracy
-library(e1071)      # for confusionMatrix
 
-set.seed(101)
 
-# Make sure y_train and y_test are factors with consistent levels
-if (is.list(y_train) || is.data.frame(y_train)) {
-  y_train <- unlist(y_train)
+train_with_progress_bar <- function(X_train, y_train, nrounds = 100) {
+  # Convert data
+  dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = as.numeric(y_train) - 1)
+  
+  # Create progress bar
+  pb <- progress_bar$new(
+    format = "  Training [:bar] :percent eta: :eta",
+    total = nrounds, 
+    clear = FALSE, 
+    width = 60
+  )
+  
+  # Create a proper named callback function
+  progress_callback <- function(env = parent.frame()) {
+    pb$tick()
+    return(TRUE)
+  }
+  
+  # Assign a name attribute to the callback
+  attr(progress_callback, "name") <- "progress_callback"
+  
+  # Train model with callback
+  model <- xgb.train(
+    params = list(
+      objective = "binary:logistic",
+      eval_metric = "logloss"
+    ),
+    data = dtrain,
+    nrounds = nrounds,
+    callbacks = list(progress_callback),
+    verbose = 0  # Disable default verbosity
+  )
+  
+  return(model)
 }
-y_train <- factor(y_train)
-y_test <- factor(y_test, levels = levels(y_train))
 
-k_fold <- 10
-ctrl <- trainControl(method = "cv", number = k_fold)
+# Call the function
+xgb_model <- train_with_progress_bar(X_train, y_train, nrounds = 100)
+```
 
-# Convert data to matrix for xgboost (caret does it internally but here for clarity)
-# Usually X_train, X_test are already numeric matrices or data frames with numeric columns
-
-# Train XGBoost model using caret with default parameters (you can tune as needed)
-xgb_model <- train(
-  x = X_train,
-  y = y_train,
-  method = "xgbTree",
-  trControl = ctrl,
-  metric = "Accuracy",
-  tuneLength = 3
-)
-
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 # Predict on test set
-xgb_pred <- predict(xgb_model, X_test)
-
+dtest <- xgb.DMatrix(data = as.matrix(X_test), label = as.numeric(y_test) - 1)
+xgb_pred <- predict(xgb_model, dtest)
+predictions <- ifelse(xgb_pred > 0.5, 1, 0)
+y_test_numeric <- as.numeric(y_test) -1 
 # Confusion matrix
-cm <- confusionMatrix(xgb_pred, y_test, positive = levels(y_test)[2])
-print(cm$table)
+cm_xgb <- confusionMatrix(factor(predictions, levels = c(0,1)), factor(y_test_numeric, levels = c(0,1)))
+saveRDS(cm_xgb, "cm_xgb.rds")
+print(cm_xgb$table)
 
 # Accuracy
-accuracy <- cm$overall["Accuracy"]
+accuracy <- cm_xgb$overall["Accuracy"]
 cat("Accuracy of model:", round(accuracy * 100, 2), "%\n")
 
 # F1 Score
-f1 <- F1_Score(y_pred = xgb_pred, y_true = y_test, positive = levels(y_test)[2])
+f1 <- F1_Score(factor(predictions, levels = c(0,1)), factor(y_test_numeric, levels = c(0,1)))
 cat("F1 Score:", round(f1, 3), "\n")
 
 # Recall (Sensitivity)
-recall <- cm$byClass["Sensitivity"]
+recall <- cm_xgb$byClass["Sensitivity"]
 cat("Recall Score:", round(recall, 3), "\n")
 
 # Balanced Accuracy
-balanced_acc <- BalancedAccuracy(y_pred = xgb_pred, y_true = y_test)
-cat("Balanced Accuracy Score:", round(balanced_acc, 3), "\n")
-
-# Cross-validated accuracy (best from caret training)
-cv_accuracy <- max(xgb_model$results$Accuracy)
-cat("Cross-validated accuracy:", round(cv_accuracy * 100, 2), "%\n")
+cat("Balanced Accuracy Score:", cm_xgb$byClass["Balanced Accuracy"], "\n")
 
 ```
-## Dealing with Imbalanced DataAdd commentMore actions
 
-## SMOTE 
+## Dealing with Imbalanced Data
 
-SMOTE or Synthetic Minority Oversampling Technique is used to create synthetic data. SMOTE uses a nearest neighbors algorithm to generate new and synthetic data we can use for training our model.
+## SMOTE
 
-```{r}
-library(caret)     # For train-test split
-library(DMwR2)     # For SMOTE implementation
+SMOTE or Synthetic Minority Oversampling Technique is used to create
+synthetic data. SMOTE uses a nearest neighbors algorithm to generate new
+and synthetic data we can use for training our model.
 
-# Setting up testing and training sets (equivalent to train_test_split)
-set.seed(27)       # Set random seed for reproducibility (equivalent to random_state)
-train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  # 75% training (test_size=0.25)
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
+set.seed(27)       
+train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE) 
 X_train <- X[train_indices, ]
 X_test <- X[-train_indices, ]
 y_train <- y[train_indices,]
@@ -1544,14 +1498,11 @@ X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self empl
 X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
 ```
 
-```{r}
-library(smotefamily)
-# Apply SMOTE to handle class imbalance
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 # Combine features and target for SMOTE
 train_data <- cbind(X_train, target = y_train)
 
-# Apply SMOTE (equivalent to sm.fit_sample)
-set.seed(27)       # Same random seed as in Python
+set.seed(27)       
 smote_result <- SMOTE(X_train, y_train, K = 5, dup_size = 1)
 X_train <- smote_result$data
 y_train <- X_train$class
@@ -1559,6 +1510,7 @@ X_train$class <- NULL
 ```
 
 **Stochastic Gradient Descent with Modified Huber Loss**
+
 ```{r}
 #' SGD with Modified Huber Loss Implementation
 #'
@@ -1590,8 +1542,8 @@ sgd_modified_huber <- function(X, y, learning_rate = 0.01, epochs = 100,
   # Initialize parameters
   n_samples <- nrow(X)
   n_features <- ncol(X)
-  w <- rep(0, n_features)  # Weights initialized to zeros
-  b <- 0                   # Bias term initialized to zero
+  w <- rep(0, n_features)  
+  b <- 0                   
   
   # Initialize training history
   history <- data.frame(epoch = integer(), loss = numeric())
@@ -1603,10 +1555,6 @@ sgd_modified_huber <- function(X, y, learning_rate = 0.01, epochs = 100,
     
     # Calculate gradients based on the margin
     gradients <- rep(0, length(margin))
-    
-    # For margin > 1: gradient = 0
-    # For -1 < margin < 1: gradient = (1 - margin) * (-y)
-    # For margin < -1: gradient = (-y)
     
     case1 <- margin <= -1
     case2 <- margin > -1 & margin < 1
@@ -1692,10 +1640,6 @@ calculate_modified_huber_loss <- function(y_true, scores) {
   # Calculate loss based on the margin
   losses <- rep(0, length(margin))
   
-  # For margin > 1: loss = 0
-  # For -1 < margin < 1: loss = (1 - margin)²
-  # For margin < -1: loss = -4 * margin
-  
   case1 <- margin <= -1
   case2 <- margin > -1 & margin < 1
   
@@ -1722,12 +1666,9 @@ predict_sgd <- function(X, model, threshold = 0.5) {
 }
 ```
 
-```{r}
-# Example usage:
-# --------------------------------------
-# Assuming you have X_train, y_train, X_test, y_test
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 y_train <- as.numeric(y_train)
-# # Fit the model
+# Fit the model
 model <- sgd_modified_huber(
    X = X_train,
    y = y_train,
@@ -1739,58 +1680,50 @@ model <- sgd_modified_huber(
    random_seed = 101,
    verbose = TRUE
  )
-#
+
 # # Make predictions
  y_pred <- predict_sgd(X_test, model)
-#
 ```
 
-```{r}
-conf_matrix <- confusionMatrix(factor(y_pred, levels = c(0,1)), y_test_factor)
-print(conf_matrix$table)
-print(paste0(round(conf_matrix$overall["Accuracy"], 2) * 100, "%"))
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
+y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
+cm_sgd_smote <- confusionMatrix(factor(y_pred, levels = c(0,1)), y_test_factor)
+print(cm_sgd_smote$table)
+print(paste0(round(cm_sgd_smote$overall["Accuracy"], 2) * 100, "%"))
 
-# Extract and print the metrics (equivalent to the Python code)
 # Accuracy
-cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+cat("Accuracy of model", cm_sgd_smote$overall["Accuracy"], "\n")
 
 # F1 Score
-cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+cat("F1 Score", cm_sgd_smote$byClass["F1"], "\n")
 
 # Recall Score
-cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+cat("Recall Score", cm_sgd_smote$byClass["Sensitivity"], "\n")
 
 # Balanced Accuracy Score 
-cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+cat("Balanced Accuracy Score", cm_sgd_smote$byClass["Balanced Accuracy"], "\n")
 ```
 
 **Decision Tree Classifier**
-```{r}
-# Load required packages
-library(rpart)      # For decision tree
-library(caret)      # For confusion matrix and cross-validation
 
-
-# Train model (equivalent to DecisionTreeClassifier)
-# Setting max_depth=10, min_samples_leaf=30, and random_state=101
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 set.seed(101)  # Equivalent to random_state in Python
 
 # Train the decision tree
 dtree <- rpart(
-  formula = y_train ~ .,        # Formula: target depends on all features
-  data = cbind(X_train, y_train = y_train),  # Combined data frame
-  method = "class",             # For classification (use "anova" for regression)
+  formula = y_train ~ .,        
+  data = cbind(X_train, y_train = y_train), 
+  method = "class",            
   control = rpart.control(
-    maxdepth = 10,              # Equivalent to max_depth
-    minsplit = 60,              # Minimum number of observations in node before split (approx 2*min_samples_leaf)
-    minbucket = 30,             # Equivalent to min_samples_leaf
-    cp = 0.001                  # Complexity parameter (smaller values = larger tree)
+    maxdepth = 10,              
+    minsplit = 60,              
+    minbucket = 30,             
+    cp = 0.001                  
   )
 )
-
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 # Predict on test set
 dtree_pred <- predict(dtree, X_test, type = "class")
 
@@ -1799,34 +1732,34 @@ y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
 dtree_pred_factor <- factor(dtree_pred, levels = levels(y_test_factor))
 
 # Calculate confusion matrix
-conf_matrix <- confusionMatrix(dtree_pred_factor, y_test_factor)
-print(conf_matrix$table)
+cm_smote_dt <- confusionMatrix(dtree_pred_factor, y_test_factor)
+saveRDS(cm_smote_dt, "cm_smote_dt.rds")
+print(cm_smote_dt$table)
 
 # Calculate accuracy
-accuracy <- conf_matrix$overall["Accuracy"]
+accuracy <- cm_smote_dt$overall["Accuracy"]
 print(paste0(round(accuracy * 100, 2), "%"))
 ```
 
-```{r}
-# Extract and print the metrics (equivalent to the Python code)
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 # Accuracy
-cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+cat("Accuracy of model", cm_smote_dt$overall["Accuracy"], "\n")
 
 # F1 Score
-cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+cat("F1 Score", cm_smote_dt$byClass["F1"], "\n")
 
 # Recall Score
-cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+cat("Recall Score", cm_smote_dt$byClass["Sensitivity"], "\n")
 
 # Balanced Accuracy Score 
-cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+cat("Balanced Accuracy Score", cm_smote_dt$byClass["Balanced Accuracy"], "\n")
 ```
 
 **Random Forest Classifier**
-```{r}
-set.seed(42)  # For reproducibility, you can use any seed value
 
-# Convert target to factor if it's a classification problem
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
+set.seed(42)  
+
 if(!is.factor(y_train)) {
   y_train_factor <- factor(y_train)
 } else {
@@ -1835,17 +1768,17 @@ if(!is.factor(y_train)) {
 
 # Train the Random Forest model
 rfc <- randomForest(
-  x = X_train,              # Features
-  y = y_train_factor,       # Target variable (must be a factor for classification)
-  ntree = 10,               # Equivalent to n_estimators=10
-  importance = TRUE         # Calculate variable importance
+  x = X_train,             
+  y = y_train_factor,       
+  ntree = 10,              
+  importance = TRUE        
 )
 
 # Predict on test set
 rfc_pred <- predict(rfc, X_test)
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 rfc_pred_factor <- factor(rfc_pred, levels = levels(y_test_factor))
 y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
 
@@ -1857,7 +1790,7 @@ print(conf_matrix$table)
 accuracy <- conf_matrix$overall["Accuracy"]
 print(paste0("Accuracy: ", round(accuracy * 100, 2), "%"))
 
-# Extract and print the metrics (equivalent to the Python code)
+# Extract and print the metrics 
 # Accuracy
 cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
 
@@ -1870,17 +1803,23 @@ cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
 # Balanced Accuracy Score 
 cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
 ```
+
+With SMOTE procedure applied, the best results, considering Accuracy, F1
+Score and Recall, were obtained by **Decision Tree Classifier** model.
+
 ## Upsampling
 
-Upsampling can be defined as adding more copies of the minority class. Upsampling can be a good choice when you don’t have a ton of data to work with. (Not a good choice here though)
+Upsampling can be defined as adding more copies of the minority class.
+Upsampling can be a good choice when you don't have a ton of data to
+work with. (Not a good choice here though)
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 y <- train_dummy["LOAN_DEFAULT_1"]
 
 X <- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT_1")]
 
-set.seed(27)       # Set random seed for reproducibility (equivalent to random_state)
-train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  # 75% training (test_size=0.25)
+set.seed(27)       
+train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE) 
 X_train <- X[train_indices, ]
 X_test <- X[-train_indices, ]
 y_train <- y[train_indices,]
@@ -1890,14 +1829,10 @@ X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self empl
 X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 X <- cbind(X_train, LOAN_DEFAULT = y_train)
-
-# Make sure X is a data frame (if it wasn't already)
 X <- as.data.frame(X)
 
-# Step 2: Separate minority and majority classes
-# (equivalent to X[X.LOAN_DEFAULT==0] and X[X.LOAN_DEFAULT==1])
 not_fraud <- X %>% filter(LOAN_DEFAULT_1 == 0)
 fraud <- X %>% filter(LOAN_DEFAULT_1 == 1)
 
@@ -1907,56 +1842,42 @@ cat("Non-fraud samples:", nrow(not_fraud), "\n")
 cat("Fraud samples:", nrow(fraud), "\n")
 ```
 
-
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 # Load required libraries
-library(dplyr)
-
-# Set seed for reproducibility (equivalent to random_state=27)
 set.seed(27)
 
 # Upsample the minority class (fraud) with replacement
-# Equivalent to: fraud_upsampled = resample(fraud, replace=True, n_samples=len(not_fraud), random_state=27)
 fraud_upsampled <- fraud %>%
   slice_sample(n = nrow(not_fraud), replace = TRUE)
 
 # Combine majority class and upsampled minority class
-# Equivalent to: upsampled = pd.concat([not_fraud, fraud_upsampled])
 upsampled <- bind_rows(not_fraud, fraud_upsampled)
 
 # Check new class counts
-# Equivalent to: upsampled.LOAN_DEFAULT.value_counts()
 upsampled_counts <- upsampled %>%
   count(LOAN_DEFAULT_1)
 print(upsampled_counts)
 
 # Separate features and target
-# Equivalent to:
-# y_train = upsampled.LOAN_DEFAULT
-# X_train = upsampled.drop('LOAN_DEFAULT', axis=1)
 y_train <- upsampled$LOAN_DEFAULT_1
 X_train <- upsampled %>% select(-LOAN_DEFAULT_1)
-
-# Print dimensions to verify
-cat("X_train dimensions:", dim(X_train)[1], "rows,", dim(X_train)[2], "columns\n")
-cat("y_train length:", length(y_train), "\n")
 ```
 
-
 **Decision Tree Classifier**
-```{r}
-set.seed(101)  # Equivalent to random_state in Python
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
+set.seed(101)  
 
 # Train the decision tree
 dtree <- rpart(
-  formula = y_train ~ .,        # Formula: target depends on all features
-  data = cbind(X_train, y_train = y_train),  # Combined data frame
-  method = "class",             # For classification (use "anova" for regression)
+  formula = y_train ~ .,       
+  data = cbind(X_train, y_train = y_train), 
+  method = "class",            
   control = rpart.control(
-    maxdepth = 10,              # Equivalent to max_depth
-    minsplit = 60,              # Minimum number of observations in node before split (approx 2*min_samples_leaf)
-    minbucket = 30,             # Equivalent to min_samples_leaf
-    cp = 0.001                  # Complexity parameter (smaller values = larger tree)
+    maxdepth = 10,             
+    minsplit = 60,             
+    minbucket = 30,             
+    cp = 0.001                  
   )
 )
 
@@ -1988,9 +1909,11 @@ cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
 # Balanced Accuracy Score 
 cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
 ```
+
 **Stochastic Gradient Descent with Modified Huber Loss**
-```{r}
-# # Fit the model
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
+# Fit the model
 model <- sgd_modified_huber(
    X = X_train,
    y = y_train,
@@ -2003,7 +1926,7 @@ model <- sgd_modified_huber(
    verbose = TRUE
  )
 #
-# # Make predictions
+# Make predictions
  y_pred <- predict_sgd(X_test, model)
  conf_matrix <- confusionMatrix(factor(y_pred, levels = c(0,1)), y_test_factor)
 print(conf_matrix$table)
@@ -2022,11 +1945,12 @@ cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
 # Balanced Accuracy Score 
 cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
 ```
-**Random Forest Classifier**
-```{r}
-set.seed(42)  # For reproducibility, you can use any seed value
 
-# Convert target to factor if it's a classification problem
+**Random Forest Classifier**
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
+set.seed(42)
+
 if(!is.factor(y_train)) {
   y_train_factor <- factor(y_train)
 } else {
@@ -2035,10 +1959,10 @@ if(!is.factor(y_train)) {
 
 # Train the Random Forest model
 rfc <- randomForest(
-  x = X_train,              # Features
-  y = y_train_factor,       # Target variable (must be a factor for classification)
-  ntree = 10,               # Equivalent to n_estimators=10
-  importance = TRUE         # Calculate variable importance
+  x = X_train,            
+  y = y_train_factor,       
+  ntree = 10,               
+  importance = TRUE         
 )
 
 # Predict on test set
@@ -2048,37 +1972,47 @@ rfc_pred_factor <- factor(rfc_pred, levels = levels(y_test_factor))
 y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
 
 # Calculate confusion matrix
-conf_matrix <- confusionMatrix(rfc_pred_factor, y_test_factor)
-print(conf_matrix$table)
+cm_upsampling_rf <- confusionMatrix(rfc_pred_factor, y_test_factor)
+saveRDS(cm_upsampling_rf, "cm_upsampling_rf.rds")
+print(cm_upsampling_rf$table)
 
 # Calculate accuracy and print as percentage
-accuracy <- conf_matrix$overall["Accuracy"]
+accuracy <- cm_upsampling_rf$overall["Accuracy"]
 print(paste0("Accuracy: ", round(accuracy * 100, 2), "%"))
 
-# Extract and print the metrics (equivalent to the Python code)
+# Extract and print the metrics
 # Accuracy
-cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+cat("Accuracy of model", cm_upsampling_rf$overall["Accuracy"], "\n")
 
 # F1 Score
-cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+cat("F1 Score", cm_upsampling_rf$byClass["F1"], "\n")
 
 # Recall Score
-cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+cat("Recall Score", cm_upsampling_rf$byClass["Sensitivity"], "\n")
 
 # Balanced Accuracy Score 
-cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+cat("Balanced Accuracy Score", cm_upsampling_rf$byClass["Balanced Accuracy"], "\n")
 ```
+
+With upsampling procedure applied, the best results, considering
+Accuracy, F1 Score and Recall, were obtained by **Random Forest
+Classifier** model.
+
 ## Downsampling
 
-Undersampling can be defined as removing some observations of the majority class. Undersampling can be a good choice when you have a ton of data -think millions of rows. But a drawback is that we are removing information that may be valuable. This could lead to underfitting and poor generalization to the test set.
+Undersampling can be defined as removing some observations of the
+majority class. Undersampling can be a good choice when you have a ton
+of data -think millions of rows. But a drawback is that we are removing
+information that may be valuable. This could lead to underfitting and
+poor generalization to the test set.
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 y <- train_dummy["LOAN_DEFAULT_1"]
 
 X <- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT_1")]
 
-set.seed(27)       # Set random seed for reproducibility (equivalent to random_state)
-train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  # 75% training (test_size=0.25)
+set.seed(27)      
+train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  
 X_train <- X[train_indices, ]
 X_test <- X[-train_indices, ]
 y_train <- y[train_indices,]
@@ -2088,62 +2022,52 @@ X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self empl
 X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
 
 X <- cbind(X_train, LOAN_DEFAULT = y_train)
-
-# Make sure X is a data frame (if it wasn't already)
 X <- as.data.frame(X)
 
-# Step 2: Separate minority and majority classes
-# (equivalent to X[X.LOAN_DEFAULT==0] and X[X.LOAN_DEFAULT==1])
 not_fraud <- X %>% filter(LOAN_DEFAULT_1 == 0)
 fraud <- X %>% filter(LOAN_DEFAULT_1 == 1)
 ```
 
-```{r}
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 set.seed(27)
 
 # Upsample the minority class (fraud) with replacement
-# Equivalent to: fraud_upsampled = resample(fraud, replace=True, n_samples=len(not_fraud), random_state=27)
 fraud_downsampled <- fraud %>%
   slice_sample(n = nrow(not_fraud), replace = FALSE)
 
 # Combine majority class and upsampled minority class
-# Equivalent to: upsampled = pd.concat([not_fraud, fraud_upsampled])
 downsampled <- bind_rows(not_fraud, fraud_downsampled)
 
 # Check new class counts
-# Equivalent to: upsampled.LOAN_DEFAULT.value_counts()
 downsampled_counts <- downsampled %>%
   count(LOAN_DEFAULT_1)
 print(downsampled_counts)
 
-# Separate features and target
-# Equivalent to:
-# y_train = upsampled.LOAN_DEFAULT
-# X_train = upsampled.drop('LOAN_DEFAULT', axis=1)
 y_train <- downsampled$LOAN_DEFAULT_1
 X_train <- downsampled %>% select(-LOAN_DEFAULT_1)
 ```
+
 **Decision Tree Classifier**
-```{r}
-set.seed(101)  # Equivalent to random_state in Python
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
+set.seed(101) 
 
 # Train the decision tree
 dtree <- rpart(
-  formula = y_train ~ .,        # Formula: target depends on all features
-  data = cbind(X_train, y_train = y_train),  # Combined data frame
-  method = "class",             # For classification (use "anova" for regression)
+  formula = y_train ~ .,        
+  data = cbind(X_train, y_train = y_train),  
+  method = "class",             
   control = rpart.control(
-    maxdepth = 10,              # Equivalent to max_depth
-    minsplit = 60,              # Minimum number of observations in node before split (approx 2*min_samples_leaf)
-    minbucket = 30,             # Equivalent to min_samples_leaf
-    cp = 0.001                  # Complexity parameter (smaller values = larger tree)
+    maxdepth = 10,              
+    minsplit = 60,              
+    minbucket = 30,             
+    cp = 0.001                  
   )
 )
 
 # Predict on test set
 dtree_pred <- predict(dtree, X_test, type = "class")
 
-# Ensure predictions and actual values are factors with the same levels
 y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
 dtree_pred_factor <- factor(dtree_pred, levels = levels(y_test_factor))
 
@@ -2155,7 +2079,7 @@ print(conf_matrix$table)
 accuracy <- conf_matrix$overall["Accuracy"]
 print(paste0(round(accuracy * 100, 2), "%"))
 
-# Extract and print the metrics (equivalent to the Python code)
+# Extract and print the metrics 
 # Accuracy
 cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
 
@@ -2170,8 +2094,8 @@ cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
 ```
 
 **Stochastic Gradient Descent with Modified Huber Loss**
-```{r}
-# # Fit the model
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 model <- sgd_modified_huber(
    X = X_train,
    y = y_train,
@@ -2183,14 +2107,13 @@ model <- sgd_modified_huber(
    random_seed = 101,
    verbose = TRUE
  )
-#
-# # Make predictions
+
  y_pred <- predict_sgd(X_test, model)
  conf_matrix <- confusionMatrix(factor(y_pred, levels = c(0,1)), y_test_factor)
 print(conf_matrix$table)
 print(paste0(round(conf_matrix$overall["Accuracy"], 2) * 100, "%"))
 
-# Extract and print the metrics (equivalent to the Python code)
+# Extract and print the metrics 
 # Accuracy
 cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
 
@@ -2205,10 +2128,10 @@ cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
 ```
 
 **Random Forest Classifier**
-```{r}
-set.seed(42)  # For reproducibility, you can use any seed value
 
-# Convert target to factor if it's a classification problem
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
+set.seed(42) 
+
 if(!is.factor(y_train)) {
   y_train_factor <- factor(y_train)
 } else {
@@ -2217,10 +2140,10 @@ if(!is.factor(y_train)) {
 
 # Train the Random Forest model
 rfc <- randomForest(
-  x = X_train,              # Features
-  y = y_train_factor,       # Target variable (must be a factor for classification)
-  ntree = 10,               # Equivalent to n_estimators=10
-  importance = TRUE         # Calculate variable importance
+  x = X_train,              
+  y = y_train_factor,       
+  ntree = 10,               
+  importance = TRUE        
 )
 
 # Predict on test set
@@ -2230,37 +2153,45 @@ rfc_pred_factor <- factor(rfc_pred, levels = levels(y_test_factor))
 y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
 
 # Calculate confusion matrix
-conf_matrix <- confusionMatrix(rfc_pred_factor, y_test_factor)
-print(conf_matrix$table)
+cm_downsampling_rf <- confusionMatrix(rfc_pred_factor, y_test_factor)
+saveRDS(cm_downsampling_rf, "cm_downsampling_rf.rds")
+print(cm_downsampling_rf$table)
 
-# Calculate accuracy and print as percentage
-accuracy <- conf_matrix$overall["Accuracy"]
+accuracy <- cm_downsampling_rf$overall["Accuracy"]
 print(paste0("Accuracy: ", round(accuracy * 100, 2), "%"))
 
-# Extract and print the metrics (equivalent to the Python code)
+# Extract and print the metrics 
 # Accuracy
-cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+cat("Accuracy of model", cm_downsampling_rf$overall["Accuracy"], "\n")
 
 # F1 Score
-cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+cat("F1 Score", cm_downsampling_rf$byClass["F1"], "\n")
 
 # Recall Score
-cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+cat("Recall Score", cm_downsampling_rf$byClass["Sensitivity"], "\n")
 
 # Balanced Accuracy Score 
-cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+cat("Balanced Accuracy Score", cm_downsampling_rf$byClass["Balanced Accuracy"], "\n")
 ```
+
+With downsamling procedure applied, based on the lowest number of false
+negative the **Random Forest Classifier** obtained the best results.
 
 ## PCA
 
-```{r}
+Principal Component Analysis (PCA) is a dimensionality reduction
+technique used in statistics and machine learning to reduce the number
+of features (dimensions) in a dataset while preserving as much of its
+variance (information) as possible.
+
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
 y <- train_dummy["LOAN_DEFAULT_1"]
 
 X <- train_dummy[, setdiff(names(train_dummy), "LOAN_DEFAULT_1")]
 X$`EMPLOYMENT_TYPE_Self employed`[is.na(X$`EMPLOYMENT_TYPE_Self employed`)] <- 0
 
-set.seed(27)       # Set random seed for reproducibility (equivalent to random_state)
-train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  # 75% training (test_size=0.25)
+set.seed(27)      
+train_indices <- createDataPartition(y$LOAN_DEFAULT_1, p = 0.75, list = FALSE)  
 X_train <- X[train_indices, ]
 X_test <- X[-train_indices, ]
 y_train <- y[train_indices,]
@@ -2270,39 +2201,13 @@ X_train$`EMPLOYMENT_TYPE_Self employed`[is.na(X_train$`EMPLOYMENT_TYPE_Self empl
 X_test$`EMPLOYMENT_TYPE_Self employed`[is.na(X_test$`EMPLOYMENT_TYPE_Self employed`)] <- 0
 ```
 
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
 
-```{r}
-# Load required libraries
-library(stats)  # Contains prcomp() for PCA
 
-# Perform PCA
-# In R, we typically use prcomp() or princomp() for PCA
-# prcomp is generally preferred as it's based on SVD and more numerically stable
-
-# Equivalent to: pca = PCA(); pca.fit(X)
 pca_result <- prcomp(X_train, 
-                     center = TRUE,   # Center the variables (equivalent to StandardScaler)
-                     scale. = FALSE)  # By default, don't scale to unit variance
+                     center = TRUE,  
+                     scale. = FALSE)
 
-# Cumulative variance explained
-cumulative_variance <- cumsum(variance_explained)
-plot(cumulative_variance, 
-     xlab = "Principal Component", 
-     ylab = "Cumulative Proportion of Variance Explained",
-     type = "b",
-     main = "Cumulative Variance Explained")
-
-```
-```{r}
-pca_result <- prcomp(X_train, 
-                     center = TRUE,   # Center the variables (equivalent to StandardScaler)
-                     scale. = FALSE,
-                     rank. = 17)  # By default, don't scale to unit variance
-
-# Print summary of the PCA
-summary(pca_result)
-
-# Visualize the proportion of variance explained by each component
 variance_explained <- pca_result$sdev^2 / sum(pca_result$sdev^2)
 plot(variance_explained, 
      xlab = "Principal Component", 
@@ -2318,27 +2223,35 @@ plot(cumulative_variance,
      type = "b",
      main = "Cumulative Variance Explained")
 
-# Access the principal components (equivalent to pca.components_ in Python)
-loadings <- pca_result$rotation
+```
 
-# Access the transformed data (equivalent to pca.transform(X) in Python)
+We can see that 17 components are enough to explain most of the
+variance. Let's see the PCA with 17 components then.
+
+```{r}
+pca_result <- prcomp(X_train, 
+                     center = TRUE,  
+                     scale. = FALSE,
+                     rank. = 17)  
 X_train_PCA <- as.data.frame(pca_result$x)
 ```
 
 **Decision Tree Classifier**
-```{r}
-set.seed(101)  # Equivalent to random_state in Python
 
+```{r, warning = FALSE, message = FALSE, cache=TRUE, class.output="bg-warning"}
+set.seed(101)  
+
+y_train <- y_train$LOAN_DEFAULT_1
 # Train the decision tree
 dtree <- rpart(
-  formula = y_train ~ .,        # Formula: target depends on all features
-  data = cbind(X_train_PCA, y_train = y_train),  # Combined data frame
-  method = "class",             # For classification (use "anova" for regression)
+  formula = y_train ~ .,        
+  data = cbind(X_train_PCA, y_train = y_train), 
+  method = "class",             
   control = rpart.control(
-    maxdepth = 10,              # Equivalent to max_depth
-    minsplit = 60,              # Minimum number of observations in node before split (approx 2*min_samples_leaf)
-    minbucket = 30,             # Equivalent to min_samples_leaf
-    cp = 0.001                  # Complexity parameter (smaller values = larger tree)
+    maxdepth = 10,              
+    minsplit = 60,              
+    minbucket = 30,             
+    cp = 0.001                  
   )
 )
 
@@ -2348,31 +2261,283 @@ X_test_PCA <- as.data.frame(X_test_PCA)
 
 dtree_pred <- predict(dtree, X_test_PCA, type = "class")
 
-# Ensure predictions and actual values are factors with the same levels
 y_test_factor <- factor(y_test$LOAN_DEFAULT_1)
 dtree_pred_factor <- factor(dtree_pred, levels = levels(y_test_factor))
 
 # Calculate confusion matrix
-conf_matrix <- confusionMatrix(dtree_pred_factor, y_test_factor)
-print(conf_matrix$table)
+cm_pca <- confusionMatrix(dtree_pred_factor, y_test_factor)
+print(cm_pca$table)
 
 # Calculate accuracy
-accuracy <- conf_matrix$overall["Accuracy"]
+accuracy <- cm_pca$overall["Accuracy"]
 print(paste0(round(accuracy * 100, 2), "%"))
 
-# Extract and print the metrics (equivalent to the Python code)
 # Accuracy
-cat("Accuracy of model", conf_matrix$overall["Accuracy"], "\n")
+cat("Accuracy of model", cm_pca$overall["Accuracy"], "\n")
 
 # F1 Score
-cat("F1 Score", conf_matrix$byClass["F1"], "\n")
+cat("F1 Score", cm_pca$byClass["F1"], "\n")
 
 # Recall Score
-cat("Recall Score", conf_matrix$byClass["Sensitivity"], "\n")
+cat("Recall Score", cm_pca$byClass["Sensitivity"], "\n")
 
 # Balanced Accuracy Score 
-cat("Balanced Accuracy Score", conf_matrix$byClass["Balanced Accuracy"], "\n")
+cat("Balanced Accuracy Score", cm_pca$byClass["Balanced Accuracy"], "\n")
 ```
 
+## Conclusions
 
+```{r}
+extract_caret_metrics <- function(conf_matrix_obj) {
+  # Extract the standard metrics provided by caret
+  accuracy <- conf_matrix_obj$overall["Accuracy"]
+  
+  # Extract class-specific statistics
+  class_stats <- conf_matrix_obj$byClass
+  
+  # For binary classification, we're interested in the positive class metrics
+  precision <- class_stats["Pos Pred Value"]  # Precision = Positive Predictive Value
+  recall <- class_stats["Sensitivity"]        # Recall = Sensitivity
+  specificity <- class_stats["Specificity"]
+  f1_score <- class_stats["F1"]
+  
+  return(data.frame(
+    Accuracy = accuracy,
+    Precision = precision,
+    Recall = recall,
+    F1_Score = f1_score,
+    Specificity = specificity
+  ))
+}
+```
 
+```{r}
+# Function to read RDS files containing caret confusionMatrix objects
+read_caret_model_results <- function(file_path, model_name) {
+  # Read the RDS file
+  result <- readRDS(file_path)
+  
+  # Check if it's a caret confusionMatrix object
+  if (class(result)[1] == "confusionMatrix") {
+    conf_matrix_obj <- result
+  } else {
+    stop(paste("File does not contain a caret confusionMatrix object:", file_path))
+  }
+  
+  # Extract the actual confusion matrix table
+  conf_matrix <- conf_matrix_obj$table
+  
+  # Extract metrics
+  metrics <- extract_caret_metrics(conf_matrix_obj)
+  
+  return(list(
+    model_name = model_name,
+    confusion_matrix = conf_matrix,
+    conf_matrix_obj = conf_matrix_obj,  # Keep the full object for reference
+    metrics = metrics
+  ))
+}
+```
+
+```{r}
+# Function to plot confusion matrix
+plot_confusion_matrix <- function(conf_matrix, title) {
+  # Convert matrix to data frame for plotting
+  conf_df <- as.data.frame(as.table(conf_matrix))
+  names(conf_df) <- c("Actual", "Predicted", "Frequency")
+  
+  # Calculate percentages for text labels
+  total <- sum(conf_df$Frequency)
+  conf_df$Percentage <- conf_df$Frequency / total * 100
+  
+  # Calculate row totals for row-wise percentages
+  row_totals <- aggregate(Frequency ~ Actual, conf_df, sum)
+  conf_df <- merge(conf_df, row_totals, by = "Actual", suffixes = c("", "_total"))
+  conf_df$Row_Percentage <- conf_df$Frequency / conf_df$Frequency_total * 100
+  
+  # Create plot
+  ggplot(conf_df, aes(x = Predicted, y = Actual, fill = Frequency)) +
+    geom_tile() +
+    geom_text(aes(label = sprintf("%.0f\n(%.1f%%)", Frequency, Row_Percentage)), 
+              color = "white", size = 4) +
+    scale_fill_gradient(low = "steelblue", high = "darkblue") +
+    labs(
+      title = title,
+      x = "Predicted Class",
+      y = "Actual Class"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      axis.text = element_text(size = 12),
+      legend.position = "none"
+    )
+}
+```
+
+```{r}
+# Function to plot comparison of metrics across models
+plot_metrics_comparison <- function(all_metrics) {
+  # Convert to long format for plotting
+  metrics_long <- all_metrics %>%
+    pivot_longer(cols = c("Accuracy", "Precision", "Recall", "F1_Score", "Specificity"),
+                 names_to = "Metric", values_to = "Value")
+  
+  # Create the plot
+  ggplot(metrics_long, aes(x = Model, y = Value, fill = Model)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = sprintf("%.3f", Value)), position = position_stack(vjust = 0.5),
+              color = "white") +
+    facet_wrap(~ Metric, scales = "free_y") +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    labs(
+      title = "Model Comparison by Performance Metrics",
+      x = "Model",
+      y = "Score"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+      legend.position = "none",
+      strip.text = element_text(face = "bold", size = 12)
+    )
+}
+```
+
+```{r}
+# Main function to compare models
+compare_caret_models <- function(file_paths, model_names) {
+  # Check that the lists have the same length
+  if (length(file_paths) != length(model_names)) {
+    stop("The number of file paths and model names must be the same")
+  }
+  
+  # Read all model results
+  model_results <- list()
+  for (i in 1:length(file_paths)) {
+    tryCatch({
+      model_results[[i]] <- read_caret_model_results(file_paths[i], model_names[i])
+      cat("Successfully loaded: ", model_names[i], "\n")
+    }, error = function(e) {
+      cat("Error loading ", model_names[i], ": ", e$message, "\n")
+    })
+  }
+  
+  # Extract metrics for all models
+  all_metrics <- data.frame()
+  for (result in model_results) {
+    metrics_df <- result$metrics
+    metrics_df$Model <- result$model_name
+    all_metrics <- rbind(all_metrics, metrics_df)
+  }
+  
+  # Create plots for confusion matrices
+  conf_plots <- list()
+  for (i in 1:length(model_results)) {
+    conf_plots[[i]] <- plot_confusion_matrix(
+      model_results[[i]]$confusion_matrix, 
+      paste("Confusion Matrix -", model_results[[i]]$model_name)
+    )
+  }
+  
+  # Plot metrics comparison
+  metrics_plot <- plot_metrics_comparison(all_metrics)
+  
+  # Print metrics table sorted by F1 Score
+  cat("\n================= MODEL COMPARISON SUMMARY =================\n")
+  print(all_metrics %>% 
+          arrange(desc(F1_Score)) %>% 
+          select(Model, Accuracy, Precision, Recall, F1_Score, Specificity) %>%
+          mutate_if(is.numeric, round, 4))
+  
+  # Create a summary table for statistical comparison
+  cat("\n================= DETAILED MODEL STATISTICS =================\n")
+  for (i in 1:length(model_results)) {
+    cat("\n", model_names[i], ":\n")
+    print(model_results[[i]]$conf_matrix_obj$overall)
+    cat("\nClass-specific statistics:\n")
+    print(model_results[[i]]$conf_matrix_obj$byClass)
+    cat("\n-------------------------------------------\n")
+  }
+  
+  # Determine best model based on F1 Score
+  best_model <- all_metrics %>%
+    arrange(desc(F1_Score)) %>%
+    dplyr::slice(1)
+  
+  cat("\n====================== BEST MODEL ======================\n")
+  cat("Based on F1 Score: ", best_model$Model, "\n")
+  cat("F1 Score: ", round(best_model$F1_Score, 4), "\n")
+  cat("Accuracy: ", round(best_model$Accuracy, 4), "\n")
+  cat("Recall (Sensitivity): ", round(best_model$Recall, 4), "\n")
+  cat("Precision (Positive Predictive Value): ", round(best_model$Precision, 4), "\n")
+  
+  # Return results
+  return(list(
+    metrics = all_metrics,
+    confusions_plots = conf_plots,
+    metrics_plot = metrics_plot,
+    best_model = best_model$Model,
+    model_results = model_results  # Return full model results for additional analysis
+  ))
+}
+```
+
+```{r}
+# Function to process all RDS files in a directory
+batch_process_caret_models <- function(directory_path) {
+  # Get all RDS files in the directory
+  rds_files <- list.files(directory_path, pattern = "\\.rds$", full.names = TRUE)
+  
+  if (length(rds_files) == 0) {
+    cat("No RDS files found in directory:", directory_path, "\n")
+    return(NULL)
+  }
+  
+  # Extract model names from filenames (remove path and extension)
+  model_names <- gsub("\\.rds$", "", basename(rds_files))
+  
+  # Compare models
+  results <- compare_caret_models(rds_files, model_names)
+  
+  # Save results automatically
+  output_dir <- file.path(directory_path, "model_comparison_results")
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir)
+  }
+  
+  # Save metrics comparison plot
+  metrics_filename <- file.path(output_dir, "metrics_comparison.png")
+  ggsave(metrics_filename, results$metrics_plot, width = 10, height = 8)
+  
+  # Save confusion matrix plots
+  for (i in 1:length(results$confusion_plots)) {
+    conf_filename <- file.path(output_dir, paste0("confusion_matrix_", model_names[i], ".png"))
+    ggsave(conf_filename, results$confusion_plots[[i]], width = 7, height = 6)
+  }
+  
+  # Create a combined confusion matrix plot
+  #combined_plot <- gridExtra::grid.arrange(grobs = results$confusion_plots, ncol = 2)
+  #ggsave(file.path(output_dir, "combined_confusion_matrices.png"), combined_plot, width = 14, height = 10)
+  
+  # Save metrics table
+  write.csv(results$metrics, file.path(output_dir, "metrics_summary.csv"), row.names = FALSE)
+  
+  cat("\nResults saved to directory:", output_dir, "\n")
+  return(results)
+}
+
+```
+
+```{r, warning = FALSE, message = FALSE, error = FALSE, cache=TRUE, class.source="bg-danger", class.output="bg-warning"}
+path <- getwd()
+results <- batch_process_caret_models(path)
+```
+
+![](model_comparison_results/combined_confusion_matrices.png)
+
+![](model_comparison_results/metrics_comparison.png)
+Based on our code the best model results were obtained by the **Logistic Regression Model**. Original study's best model was **Random Forest model with applied SMOTE**. The results are much different, which can be explained by different specification of the implemented functions used for modelling.
+
+![](org_best_model.png)
